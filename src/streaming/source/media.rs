@@ -534,6 +534,50 @@ fn parse_hvcc(d: &[u8]) -> Result<(Vec<Vec<u8>>, usize), String> {
     Ok((nals, length_size))
 }
 
+/// The codec a stream's extradata belongs to, read from its parameter sets.
+///
+/// zmc's HELLO names the codec by `AVCodecID`, whose numbering moves between
+/// FFmpeg majors (HEVC is 173 in FFmpeg 7 and 172 in FFmpeg 9, #212). An id
+/// this build does not recognise may still be H.264 or H.265 from a zmc linked
+/// against another FFmpeg, and the parameter sets settle it: H.264 carries an
+/// SPS and PPS (types 7 and 8), HEVC a VPS, SPS and PPS (32 to 34), and no
+/// header byte is a parameter set in both numberings. SEI is allowed beside
+/// them. Anything else, or a mix, is `Unknown`.
+pub fn codec_from_extradata(extradata: &[u8]) -> VideoCodec {
+    if extradata.starts_with(&[0, 0, 1]) || extradata.starts_with(&[0, 0, 0, 1]) {
+        return codec_from_parameter_sets(&split_annexb_nals(extradata.to_vec()));
+    }
+    if extradata.first() == Some(&1) {
+        // A configuration record. Either parser can accept the other's bytes
+        // as garbage, so a record counts only if its NALs agree with it.
+        if let Ok((nals, _)) = parse_hvcc(extradata) {
+            if codec_from_parameter_sets(&nals) == VideoCodec::H265 {
+                return VideoCodec::H265;
+            }
+        }
+        if let Ok((nals, _)) = parse_avcc(extradata) {
+            if codec_from_parameter_sets(&nals) == VideoCodec::H264 {
+                return VideoCodec::H264;
+            }
+        }
+    }
+    VideoCodec::Unknown
+}
+
+fn codec_from_parameter_sets(nals: &[Vec<u8>]) -> VideoCodec {
+    let all_h264 = nals.iter().all(|n| matches!(h264_nal_type(n), Some(6..=8)));
+    if !nals.is_empty() && all_h264 && nals.iter().any(|n| h264_nal_type(n) == Some(7)) {
+        return VideoCodec::H264;
+    }
+    let all_h265 = nals
+        .iter()
+        .all(|n| matches!(h265_nal_type(n), Some(32..=34 | 39 | 40)));
+    if !nals.is_empty() && all_h265 && nals.iter().any(|n| h265_nal_type(n) == Some(33)) {
+        return VideoCodec::H265;
+    }
+    VideoCodec::Unknown
+}
+
 /// Convert a stream's codec extradata into Annex B parameter-set NALs.
 ///
 /// ffmpeg's `codecpar->extradata` (which zmc forwards verbatim in HELLO) is
@@ -1012,6 +1056,86 @@ mod tests {
     #[test]
     fn parse_hvcc_rejects_short_record() {
         assert!(parse_hvcc(&[0u8; 10]).is_err());
+    }
+
+    // --- codec_from_extradata (#212) ---
+
+    const H264_SPS: &[u8] = &[0, 0, 0, 1, 0x67, 0x4D, 0x00, 0x33];
+    const H264_PPS: &[u8] = &[0, 0, 0, 1, 0x68, 0xCE, 0x3C, 0x80];
+    const HEVC_VPS: &[u8] = &[0, 0, 0, 1, 0x40, 0x01, 0x0C, 0x01];
+    const HEVC_SPS: &[u8] = &[0, 0, 0, 1, 0x42, 0x01, 0x01, 0x01];
+    const HEVC_PPS: &[u8] = &[0, 0, 0, 1, 0x44, 0x01, 0xC1, 0x72];
+
+    #[test]
+    fn annexb_h264_parameter_sets_are_h264() {
+        let e = [H264_SPS, H264_PPS].concat();
+        assert_eq!(codec_from_extradata(&e), VideoCodec::H264);
+    }
+
+    #[test]
+    fn annexb_hevc_parameter_sets_are_h265() {
+        let e = [HEVC_VPS, HEVC_SPS, HEVC_PPS].concat();
+        assert_eq!(codec_from_extradata(&e), VideoCodec::H265);
+        // Three-byte start codes, as some encoders write them.
+        let short: Vec<u8> = [&HEVC_VPS[1..], &HEVC_SPS[1..], &HEVC_PPS[1..]].concat();
+        assert_eq!(codec_from_extradata(&short), VideoCodec::H265);
+    }
+
+    #[test]
+    fn sei_beside_the_parameter_sets_is_allowed() {
+        let h264_sei: &[u8] = &[0, 0, 0, 1, 0x06, 0x05, 0x01];
+        let hevc_sei: &[u8] = &[0, 0, 0, 1, 0x4E, 0x01, 0x05];
+        assert_eq!(
+            codec_from_extradata(&[H264_SPS, H264_PPS, h264_sei].concat()),
+            VideoCodec::H264
+        );
+        assert_eq!(
+            codec_from_extradata(&[HEVC_VPS, HEVC_SPS, HEVC_PPS, hevc_sei].concat()),
+            VideoCodec::H265
+        );
+    }
+
+    #[test]
+    fn configuration_records_are_identified() {
+        let avcc = [
+            1, 0x42, 0, 0x1f, 0xff, 0xe1, 0, 4, 0x67, 0x4D, 0x00, 0x33, 1, 0, 2, 0x68, 0xce,
+        ];
+        assert_eq!(codec_from_extradata(&avcc), VideoCodec::H264);
+
+        let mut hvcc = vec![1u8];
+        hvcc.extend_from_slice(&[0u8; 20]);
+        hvcc.push(0xFF);
+        hvcc.push(3);
+        hvcc.extend_from_slice(&[0x20, 0x00, 0x01, 0x00, 0x02, 0x40, 0x01]); // VPS
+        hvcc.extend_from_slice(&[0x21, 0x00, 0x01, 0x00, 0x02, 0x42, 0x01]); // SPS
+        hvcc.extend_from_slice(&[0x22, 0x00, 0x01, 0x00, 0x02, 0x44, 0x01]); // PPS
+        assert_eq!(codec_from_extradata(&hvcc), VideoCodec::H265);
+    }
+
+    #[test]
+    fn anything_else_stays_unknown() {
+        assert_eq!(codec_from_extradata(&[]), VideoCodec::Unknown);
+        // MJPEG and other codecs carry no H.26x parameter sets.
+        assert_eq!(
+            codec_from_extradata(&[0xFF, 0xD8, 0xFF, 0xE0]),
+            VideoCodec::Unknown
+        );
+        // A slice is not a parameter set.
+        assert_eq!(
+            codec_from_extradata(&[0, 0, 0, 1, 0x65, 0x88, 0x84]),
+            VideoCodec::Unknown
+        );
+        // Parameter sets without an SPS cannot be decoded either way.
+        assert_eq!(codec_from_extradata(H264_PPS), VideoCodec::Unknown);
+        assert_eq!(
+            codec_from_extradata(&[HEVC_VPS, HEVC_PPS].concat()),
+            VideoCodec::Unknown
+        );
+        // A mix of the two is corrupt, not either.
+        assert_eq!(
+            codec_from_extradata(&[H264_SPS, HEVC_SPS].concat()),
+            VideoCodec::Unknown
+        );
     }
 
     // --- extradata_to_annexb_nals ---
