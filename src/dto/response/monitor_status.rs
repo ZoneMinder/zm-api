@@ -33,7 +33,7 @@ impl From<&MonitorStatusModel> for MonitorStatusResponse {
             capture_fps: model.capture_fps.to_string(),
             analysis_fps: model.analysis_fps.to_string(),
             capture_bandwidth: model.capture_bandwidth,
-            updated_on: model.updated_on.to_rfc3339(),
+            updated_on: crate::util::timestamp_to_utc(model.updated_on).to_rfc3339(),
             alarm_state: None,
             alarms_disabled: None,
             analysing: None,
@@ -74,4 +74,32 @@ pub struct AudioLevelResponse {
     pub threshold: u8,
     /// Whether audio detection scores (`AudioDetection`).
     pub detection: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entity::sea_orm_active_enums::Status;
+    use rust_decimal::Decimal;
+
+    /// `Monitor_Status.UpdatedOn` is a TIMESTAMP, which a SYSTEM-zone session
+    /// returns as local wall-clock. It must come out as the same instant in
+    /// UTC, not as that wall-clock labelled UTC.
+    #[test]
+    fn updated_on_is_the_local_column_value_in_utc() {
+        let instant = chrono::DateTime::parse_from_rfc3339("2026-10-23T21:30:15Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let model = MonitorStatusModel {
+            monitor_id: 1,
+            status: Status::Connected,
+            capture_fps: Decimal::new(1000, 2),
+            analysis_fps: Decimal::new(1000, 2),
+            capture_bandwidth: 0,
+            updated_on: crate::util::utc_to_timestamp(instant),
+        };
+        let resp = MonitorStatusResponse::from(&model);
+        let parsed = chrono::DateTime::parse_from_rfc3339(&resp.updated_on).unwrap();
+        assert_eq!(parsed, instant);
+    }
 }

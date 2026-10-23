@@ -46,6 +46,48 @@ pub fn utc_to_naive_local(dt: chrono::DateTime<chrono::Utc>) -> chrono::NaiveDat
     dt.with_timezone(&chrono::Local).naive_local()
 }
 
+/// The true instant of a ZoneMinder `TIMESTAMP` column (`Monitor_Status.UpdatedOn`,
+/// `Frames.TimeStamp`, `Tags.CreateDate` and the like).
+///
+/// The session runs in the server's zone (`timezone=SYSTEM`, #98), so MariaDB
+/// returns a TIMESTAMP as local wall-clock. sqlx only decodes TIMESTAMP into
+/// `DateTime<Utc>` and labels those digits UTC, which put every value off by
+/// the UTC offset (zm-web showed every monitor Offline: its status row looked
+/// hours old, #216). This reads the digits as the local time they are.
+pub fn timestamp_to_utc(column: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    naive_local_to_utc(column.naive_utc())
+}
+
+/// The value to bind to a ZoneMinder `TIMESTAMP` column for a true instant:
+/// the inverse of [`timestamp_to_utc`]. MariaDB reads bound values in the
+/// session zone, so it must carry the local wall-clock.
+pub fn utc_to_timestamp(dt: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    utc_to_naive_local(dt).and_utc()
+}
+
+#[cfg(test)]
+mod timestamp_column_tests {
+    use super::{timestamp_to_utc, utc_to_timestamp};
+
+    #[test]
+    fn a_written_instant_reads_back_unchanged() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-23T21:30:15Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert_eq!(timestamp_to_utc(utc_to_timestamp(now)), now);
+    }
+
+    /// The column carries local digits: what `NOW()` stores in a SYSTEM session.
+    #[test]
+    fn the_column_holds_local_wall_clock() {
+        let now = chrono::Utc::now();
+        assert_eq!(
+            utc_to_timestamp(now).naive_utc(),
+            now.with_timezone(&chrono::Local).naive_local()
+        );
+    }
+}
+
 #[cfg(test)]
 mod naive_local_to_utc_tests {
     use super::{naive_local_to_utc, utc_to_naive_local};

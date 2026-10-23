@@ -21,7 +21,7 @@ impl From<&TagModel> for TagResponse {
         Self {
             id: model.id,
             name: model.name.clone(),
-            create_date: model.create_date,
+            create_date: model.create_date.map(crate::util::timestamp_to_utc),
             event_count: None,
         }
     }
@@ -33,7 +33,7 @@ impl TagResponse {
         Self {
             id: model.id,
             name: model.name.clone(),
-            create_date: model.create_date,
+            create_date: model.create_date.map(crate::util::timestamp_to_utc),
             event_count: Some(count),
         }
     }

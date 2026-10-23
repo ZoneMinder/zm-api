@@ -33,7 +33,7 @@ impl From<&FrameModel> for FrameResponse {
             event_id: model.event_id,
             frame_id: model.frame_id,
             r#type: model.r#type.clone(),
-            time_stamp: model.time_stamp.to_string(),
+            time_stamp: crate::util::timestamp_to_utc(model.time_stamp).to_string(),
             delta: model.delta,
             score: model.score,
             audio_level: model.audio_level,

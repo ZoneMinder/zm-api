@@ -25,7 +25,7 @@ impl From<&ServerStatModel> for ServerStatResponse {
         Self {
             id: model.id,
             server_id: model.server_id,
-            time_stamp: model.time_stamp.to_rfc3339(),
+            time_stamp: crate::util::timestamp_to_utc(model.time_stamp).to_rfc3339(),
             cpu_load: model.cpu_load.map(|d| d.to_string()),
             cpu_user_percent: model.cpu_user_percent.map(|d| d.to_string()),
             cpu_nice_percent: model.cpu_nice_percent.map(|d| d.to_string()),
