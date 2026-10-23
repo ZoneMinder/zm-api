@@ -160,6 +160,14 @@ impl ZmConfig {
         })
     }
 
+    /// Get the Unix socket path from ZM_DB_HOST ("localhost:/path/to/socket")
+    ///
+    /// Returns None for "hostname[:port]".
+    pub fn db_socket(&self) -> Option<&str> {
+        self.get("ZM_DB_HOST")
+            .and_then(|host| host.find(":/").map(|idx| &host[idx + 1..]))
+    }
+
     /// Get database port from ZM_DB_HOST if specified
     ///
     /// Returns None if no port is specified (use MySQL default 3306)
@@ -295,6 +303,7 @@ ZM_DB_PASS=zmpass
 
         assert_eq!(config.db_host(), Some("localhost"));
         assert_eq!(config.db_port(), None);
+        assert_eq!(config.db_socket(), Some("/var/run/mysqld/mysqld.sock"));
     }
 
     #[test]
