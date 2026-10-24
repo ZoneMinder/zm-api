@@ -51,13 +51,42 @@ pub async fn update(
     if !scope.allows(id, Level::Edit) {
         return Err(not_found(id));
     }
-    // Re-parenting to a real group must not form a cycle or self-parent.
-    if let Some(Some(new_parent)) = parent_id {
-        validate_new_parent(state, id, new_parent).await?;
+    if let Some(new_parent) = parent_id {
+        let current = repo::groups::find_by_id(state.db(), id)
+            .await?
+            .ok_or_else(|| not_found(id))?;
+        if current.parent_id != new_parent {
+            // Where a group sits decides whose grants reach its monitors, so
+            // moving it needs Edit where it comes from and where it goes.
+            if let Some(old_parent) = current.parent_id {
+                ensure_may_place_under(scope, old_parent)?;
+            }
+            if let Some(new_parent) = new_parent {
+                ensure_may_place_under(scope, new_parent)?;
+                // Must not form a cycle or self-parent.
+                validate_new_parent(state, id, new_parent).await?;
+            }
+        }
     }
     let item = repo::groups::update(state.db(), id, name, parent_id).await?;
     let item = item.ok_or_else(|| not_found(id))?;
     Ok(GroupResponse::from(&item))
+}
+
+/// A group may go under (or come out from under) `parent` only with Edit on
+/// it. A parent the caller can't see answers as if it didn't exist.
+fn ensure_may_place_under(scope: &GroupScope, parent: u32) -> AppResult<()> {
+    if !scope.allows(parent, Level::View) {
+        return Err(AppError::BadRequestError(format!(
+            "parent group {parent} does not exist"
+        )));
+    }
+    if !scope.allows(parent, Level::Edit) {
+        return Err(AppError::PermissionDeniedError(format!(
+            "Edit on group {parent} required to move groups in or out of it"
+        )));
+    }
+    Ok(())
 }
 
 /// Reject re-parenting `id` under `new_parent` when it would self-parent, name
@@ -100,7 +129,11 @@ async fn validate_new_parent(state: &AppState, id: u32, new_parent: u32) -> AppR
 pub async fn create(
     state: &AppState,
     req: crate::dto::request::CreateGroupRequest,
+    scope: &GroupScope,
 ) -> AppResult<GroupResponse> {
+    if let Some(parent) = req.parent_id {
+        ensure_may_place_under(scope, parent)?;
+    }
     let model = repo::groups::create(state.db(), &req).await?;
     Ok(GroupResponse::from(&model))
 }
@@ -133,8 +166,10 @@ mod tests {
 
     #[tokio::test]
     async fn update_rejects_self_parenting() {
-        // No query needed: self-parent is caught before any DB lookup.
-        let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
+        // Only the group itself is read: self-parent is caught before the walk.
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results::<GroupModel, _, _>(vec![vec![mk_group(5, "g5")]])
+            .into_connection();
         let state = AppState::for_test_with_db(db);
         let err = update(&state, 5, None, Some(Some(5)), &GroupScope::All)
             .await
@@ -148,7 +183,7 @@ mod tests {
         let mut g10 = mk_group(10, "g10");
         g10.parent_id = Some(5);
         let db = MockDatabase::new(DatabaseBackend::MySql)
-            .append_query_results::<GroupModel, _, _>(vec![vec![g10]])
+            .append_query_results::<GroupModel, _, _>(vec![vec![mk_group(5, "g5")], vec![g10]])
             .into_connection();
         let state = AppState::for_test_with_db(db);
         let err = update(&state, 5, None, Some(Some(10)), &GroupScope::All)
@@ -161,7 +196,7 @@ mod tests {
     async fn update_rejects_nonexistent_parent() {
         let empty: Vec<GroupModel> = vec![];
         let db = MockDatabase::new(DatabaseBackend::MySql)
-            .append_query_results::<GroupModel, _, _>(vec![empty])
+            .append_query_results::<GroupModel, _, _>(vec![vec![mk_group(5, "g5")], empty])
             .into_connection();
         let state = AppState::for_test_with_db(db);
         let err = update(&state, 5, None, Some(Some(999)), &GroupScope::All)
@@ -259,7 +294,13 @@ mod tests {
             name: "new".into(),
             parent_id: None,
         };
-        assert_eq!(create(&state_create, req).await.unwrap().name, "new");
+        assert_eq!(
+            create(&state_create, req, &GroupScope::All)
+                .await
+                .unwrap()
+                .name,
+            "new"
+        );
 
         let db_del_ok = MockDatabase::new(DatabaseBackend::MySql)
             .append_exec_results(vec![MockExecResult {

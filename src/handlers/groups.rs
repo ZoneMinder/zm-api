@@ -104,10 +104,11 @@ pub async fn update_group(
 )]
 pub async fn create_group(
     State(state): State<AppState>,
+    scope: GroupScope,
     Json(req): Json<CreateGroupRequest>,
 ) -> AppResult<(axum::http::StatusCode, Json<GroupResponse>)> {
     req.validate().map_err(AppError::InvalidInputError)?;
-    let item = crate::service::groups::create(&state, req).await?;
+    let item = crate::service::groups::create(&state, req, &scope).await?;
     Ok((axum::http::StatusCode::CREATED, Json(item)))
 }
 

@@ -718,6 +718,16 @@ recognisable path forward.
 
 ### Security
 
+- **A role's group grants now limit the groups API, and moving a group needs
+  Edit on both parents.** The groups API read only the user's own
+  `Groups_Permissions`, so a user whose role was limited to some groups, with
+  no rows of their own, could see and edit every group. Monitor access already
+  applied the role's group grants to each group's subgroups, so moving a hidden
+  group under a group the role grants made its monitors visible. Now the
+  role's rows count, with the user's own row deciding first, as for monitors.
+  Moving a group with `PUT /api/v3/groups/{id}` needs Edit on the old and the
+  new parent, and creating one under a parent needs Edit on that parent.
+
 - **Onboarding a discovered camera needs Monitors Create.** `POST
   /api/v3/discovery/onboard` adds a monitor, but it only needed Monitors Edit
   and unrestricted monitor access, so a user ZoneMinder doesn't allow to add
