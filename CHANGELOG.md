@@ -718,6 +718,16 @@ recognisable path forward.
 
 ### Security
 
+- **Generate Video can't replace the event's recording, and the queue has a
+  limit.** A video's file name comes from the event's name, so renaming an
+  event to match its recording (`{id}-video`) and asking for a video with
+  `overwrite` replaced the recording with the render. `POST
+  /api/v3/events/{id}/videos` now refuses (409) a video whose file would be
+  the recording, and a queued job that would land on it fails instead.
+  Each user can have 4 videos queued or running (409 after that), and `size`
+  can be at most 4 times the event's width and height, the same limit as
+  `scale`.
+
 - **RTSP connections must present a working link within 15 seconds.** A
   connection holds one of the RTSP server's slots from the moment it opens,
   and `OPTIONS` needs no link, so a client that kept sending `OPTIONS` could

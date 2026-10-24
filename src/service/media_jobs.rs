@@ -337,6 +337,35 @@ pub async fn delete_video(
 
 // ---- Jobs -----------------------------------------------------------------------
 
+/// Videos one user may have queued or running at once. Each can take up to
+/// half an hour and fill storage, which the retention reaper then frees by
+/// deleting other events.
+pub const MAX_WAITING_PER_USER: usize = 4;
+
+/// `size` may be at most this many times the event's own width and height,
+/// the same bound `scale` has. A fixed cap wouldn't fit panoramic cameras.
+const MAX_SIZE_FACTOR: u32 = 4;
+
+/// `WIDTHxHEIGHT` within [`MAX_SIZE_FACTOR`] times the event's frame. An
+/// event that didn't record its size isn't checked.
+fn check_size(size: &str, event_w: u32, event_h: u32) -> AppResult<()> {
+    let (w, h) = size
+        .split_once('x')
+        .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)))
+        .ok_or_else(|| AppError::BadRequestError(format!("size {size} is not WIDTHxHEIGHT")))?;
+    if event_w == 0 || event_h == 0 {
+        return Ok(());
+    }
+    let (max_w, max_h) = (event_w * MAX_SIZE_FACTOR, event_h * MAX_SIZE_FACTOR);
+    if w > max_w || h > max_h {
+        return Err(AppError::BadRequestError(format!(
+            "size {size} is more than {MAX_SIZE_FACTOR} times the event's {event_w}x{event_h} \
+             (at most {max_w}x{max_h})"
+        )));
+    }
+    Ok(())
+}
+
 /// Queue a video for an event.
 pub async fn enqueue_video(
     state: &AppState,
@@ -367,9 +396,36 @@ pub async fn enqueue_video(
         }
         None => "mp4".into(),
     };
+    if let Some(size) = &req.size {
+        check_size(size, event.width.into(), event.height.into())?;
+    }
+    // Rendering onto the recording's file name would replace the recording.
+    if video_file_name(&event.name, &req, &format) == event.default_video {
+        return Err(AppError::ConflictError(
+            "this video's file name is the event's recording; rename the event first".into(),
+        ));
+    }
     req.format = Some(format);
-    let job = jobs(state)
-        .await
+    let store = jobs(state).await;
+    let mut waiting = 0;
+    for status in [QUEUED, RUNNING] {
+        let filter = JobFilter {
+            status: Some(status.into()),
+            ..Default::default()
+        };
+        waiting += store
+            .list(state.db(), &filter)
+            .await?
+            .iter()
+            .filter(|j| j.created_by == Some(uid))
+            .count();
+    }
+    if waiting >= MAX_WAITING_PER_USER {
+        return Err(AppError::ConflictError(format!(
+            "you have {waiting} videos waiting; wait for one to finish"
+        )));
+    }
+    let job = store
         .insert(
             state.db(),
             NewJob {
@@ -515,6 +571,10 @@ async fn run_video(state: &AppState, job: &media_jobs::Model) -> Result<String, 
         .map_err(|e| e.to_string())?;
     let format = req.format.clone().unwrap_or_else(|| "mp4".into());
     let name = video_file_name(&event.name, &req, &format);
+    // Checked again here: the event may have been renamed since it was queued.
+    if name == event.default_video {
+        return Err("its file name is now the event's recording".into());
+    }
     let target = dir.join(&name);
     if !req.overwrite {
         if let Ok(m) = tokio::fs::metadata(&target).await {
