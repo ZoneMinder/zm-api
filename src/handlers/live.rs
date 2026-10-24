@@ -203,7 +203,9 @@ pub async fn start_live_stream(
 
 /// Stop live streaming for a monitor
 ///
-/// This endpoint is idempotent: stopping a non-active stream returns 204.
+/// This ends the session for every viewer, so it needs Monitors Edit on the
+/// monitor, not just Stream View. Idempotent: stopping a non-active stream
+/// returns 204.
 #[utoipa::path(
     delete,
     path = "/api/v3/live/{monitor_id}/stop",
@@ -214,6 +216,7 @@ pub async fn start_live_stream(
     ),
     responses(
         (status = 204, description = "Live streaming stopped (or was not active)"),
+        (status = 403, description = "Needs Monitors Edit on this monitor", body = AppResponseError),
         (status = 503, description = "Service unavailable", body = AppResponseError)
     ),
     security(
@@ -223,7 +226,15 @@ pub async fn start_live_stream(
 pub async fn stop_live_stream(
     State(state): State<AppState>,
     Path(monitor_id): Path<u32>,
+    axum::Extension(claims): axum::Extension<crate::util::claim::UserClaims>,
+    scope: crate::service::monitor_acl::MonitorScope,
 ) -> AppResult<StatusCode> {
+    use crate::util::authz::Level;
+    if claims.perms.monitors < Level::Edit || !scope.allows(monitor_id, Level::Edit) {
+        return Err(AppError::PermissionDeniedError(
+            "Monitors Edit on this monitor required to stop its live stream".to_string(),
+        ));
+    }
     info!("Stopping live stream for monitor {}", monitor_id);
 
     let coordinator = state.live_coordinator.as_ref().ok_or_else(|| {

@@ -313,3 +313,48 @@ async fn an_unknown_whep_session_is_not_found() {
         .await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+/// Stopping a live session ends it for every viewer, so it needs Monitors
+/// Edit on that monitor. Stream View alone used to be enough.
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn stopping_a_live_session_needs_monitor_edit() {
+    use common::fixtures::{grant_monitor_permission, insert_user_with_id};
+    use common::harness::{token_for, token_with};
+    use zm_api::entity::sea_orm_active_enums::Permission;
+    use zm_api::util::authz::{Level, UserPermissions};
+
+    let app = TestApp::spawn().await;
+    let monitor = insert_monitor(&app.db, "LiveStop").await.expect("monitor");
+    let _m = RowGuard::monitor(monitor.id);
+    let stop = format!("/api/v3/live/{}/stop", monitor.id);
+
+    let viewer = UserPermissions {
+        stream: Level::View,
+        monitors: Level::View,
+        ..Default::default()
+    };
+    let editor = UserPermissions {
+        monitors: Level::Edit,
+        ..viewer
+    };
+
+    let r = app.delete(&stop, &token_with(viewer)).await;
+    assert_error(&r, StatusCode::FORBIDDEN, "PERMISSION_DENIED_ERROR");
+
+    // Through the check: no live streaming in tests, so 503.
+    let r = app.delete(&stop, &token_with(editor)).await;
+    assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE, "{}", r.text());
+
+    // Monitors Edit overall, but only View on this monitor.
+    const UID: u32 = 990_501;
+    insert_user_with_id(&app.db, UID, "LiveStop")
+        .await
+        .expect("user");
+    let _u = RowGuard::user(UID);
+    grant_monitor_permission(&app.db, monitor.id, UID, Permission::View)
+        .await
+        .expect("grant");
+    let r = app.delete(&stop, &token_for(UID, editor)).await;
+    assert_error(&r, StatusCode::FORBIDDEN, "PERMISSION_DENIED_ERROR");
+}

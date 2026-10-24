@@ -718,6 +718,13 @@ recognisable path forward.
 
 ### Security
 
+- **Only a monitor's editors can stop its live stream.** `DELETE
+  /api/v3/live/{monitor_id}/stop` ends the session for every viewer, but
+  Stream View was enough to call it, so any viewer could keep cutting off
+  everyone else. It now needs Monitors Edit on that monitor (403 otherwise).
+  Viewers don't need it: closing the player is enough, and idle sessions are
+  reaped.
+
 - **A huge `hours` no longer crashes the request.** `GET
   /api/v3/events/counts/{hours}` and `/events/counts-by-monitor/{hours}` did
   date arithmetic on the value unchecked, so any signed-in user could send a
