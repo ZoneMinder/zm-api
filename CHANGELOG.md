@@ -718,6 +718,12 @@ recognisable path forward.
 
 ### Security
 
+- **Onboarding a discovered camera needs Monitors Create.** `POST
+  /api/v3/discovery/onboard` adds a monitor, but it only needed Monitors Edit
+  and unrestricted monitor access, so a user ZoneMinder doesn't allow to add
+  monitors could add them this way. It now needs Monitors Create or System
+  Edit, as `POST /api/v3/monitors` does.
+
 - **`linked_monitors` can only name monitors you can see.** A user who could
   edit one monitor could link it to any other, including monitors they're
   denied, and so record events off a hidden camera's alarms. `POST` and
