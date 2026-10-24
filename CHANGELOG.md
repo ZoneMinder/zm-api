@@ -718,6 +718,13 @@ recognisable path forward.
 
 ### Security
 
+- **RTSP connections must present a working link within 15 seconds.** A
+  connection holds one of the RTSP server's slots from the moment it opens,
+  and `OPTIONS` needs no link, so a client that kept sending `OPTIONS` could
+  hold every slot without ever authenticating and lock out every player. A
+  connection that hasn't presented a working link 15 seconds after it opens
+  is now closed.
+
 - **PTZ can't be pointed at the server itself.** A monitor's
   `control_address` is set by anyone with Monitors Edit, and PTZ commands
   make zm-api send requests there. It took any address, followed redirects,

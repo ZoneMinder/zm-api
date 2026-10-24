@@ -121,6 +121,10 @@ impl Backend for Fake {
     fn reauth_interval(&self) -> Duration {
         self.reauth
     }
+
+    fn auth_deadline(&self) -> Duration {
+        Duration::from_millis(500)
+    }
 }
 
 async fn start(fake: Fake) -> u16 {
@@ -347,4 +351,32 @@ async fn ffprobe_reads_the_stream() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+}
+
+/// A connection that never presents a working link is closed at the
+/// deadline, however busy it keeps itself; one that did isn't.
+#[tokio::test]
+async fn a_connection_must_authorize_before_the_deadline() {
+    let port = start(Fake::new(VideoCodec::H264, H264)).await;
+    let mut idle = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let mut authed = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let url = format!("rtsp://127.0.0.1:{port}/live/1?st=good");
+    let (code, _) = exchange(&mut authed, &req("DESCRIBE", &url, 1, "")).await;
+    assert_eq!(code, 200);
+
+    let mut cseq = 1;
+    let mut open = true;
+    for _ in 0..10 {
+        cseq += 1;
+        let (code, _) = exchange(&mut idle, &req("OPTIONS", "*", cseq, "")).await;
+        if code == 0 {
+            open = false;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(!open, "OPTIONS keepalives held the slot past the deadline");
+
+    let (code, _) = exchange(&mut authed, &req("OPTIONS", "*", cseq + 1, "")).await;
+    assert_eq!(code, 200, "an authorized connection stays");
 }
