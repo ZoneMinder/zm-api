@@ -718,6 +718,13 @@ recognisable path forward.
 
 ### Security
 
+- **A huge `hours` no longer crashes the request.** `GET
+  /api/v3/events/counts/{hours}` and `/events/counts-by-monitor/{hours}` did
+  date arithmetic on the value unchecked, so any signed-in user could send a
+  number like `9223372036854775807` and panic the request, which a proxy
+  reports as 502. Both now answer 400 unless `hours` is from 1 to 87600 (ten
+  years). Zero and negative values, which used to return nothing, get 400 too.
+
 - **Live WebRTC sessions over the WebSocket are rechecked, capped and timed
   out.** A token or signed link opened `/api/v3/live/{id}/webrtc/ws` once
   and the session then ran until the client left. Now:

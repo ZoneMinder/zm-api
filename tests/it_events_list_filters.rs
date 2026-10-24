@@ -561,3 +561,37 @@ async fn time_filters_round_trip_an_events_reported_start() {
     let later = (at + chrono::Duration::seconds(1)).to_rfc3339();
     assert!(ids(later).await.is_empty());
 }
+
+/// Out-of-range `hours` is refused with 400 on both counts routes. A huge
+/// value used to overflow the time arithmetic and panic the request.
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn counts_refuse_out_of_range_hours() {
+    let app = TestApp::spawn().await;
+    let token = superuser_token();
+    for route in ["counts", "counts-by-monitor"] {
+        for hours in [
+            "9223372036854775807",
+            "-9223372036854775808",
+            "0",
+            "-1",
+            "87601",
+        ] {
+            let r = app
+                .get(&format!("/api/v3/events/{route}/{hours}"), &token)
+                .await;
+            assert_eq!(
+                r.status(),
+                StatusCode::BAD_REQUEST,
+                "{route}/{hours}: {}",
+                r.text()
+            );
+        }
+        for hours in ["1", "87600"] {
+            let r = app
+                .get(&format!("/api/v3/events/{route}/{hours}"), &token)
+                .await;
+            assert_eq!(r.status(), StatusCode::OK, "{route}/{hours}: {}", r.text());
+        }
+    }
+}

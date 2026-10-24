@@ -335,6 +335,21 @@ pub async fn delete(state: &AppState, id: u32, scope: &MonitorScope) -> AppResul
     Ok(())
 }
 
+/// The longest window the counts routes take: ten years.
+pub const MAX_COUNT_HOURS: i64 = 87_600;
+
+/// `hours` for a counts route, or 400. Out of range used to overflow the time
+/// arithmetic and panic the request.
+fn check_count_hours(hours: i64) -> AppResult<()> {
+    if (1..=MAX_COUNT_HOURS).contains(&hours) {
+        Ok(())
+    } else {
+        Err(AppError::BadRequestError(format!(
+            "hours must be between 1 and {MAX_COUNT_HOURS}"
+        )))
+    }
+}
+
 /// Get event counts for the last n hours (grouped by hour)
 #[instrument(level = "debug", skip(state))]
 pub async fn get_event_counts(
@@ -343,6 +358,7 @@ pub async fn get_event_counts(
     monitor_id: Option<u32>,
     scope: &MonitorScope,
 ) -> AppResult<EventCountsResponse> {
+    check_count_hours(hours)?;
     // One monitor's histogram (#36), or every monitor the caller can see. A
     // monitor outside the caller's scope counts nothing.
     let filter = match monitor_id {
@@ -375,6 +391,7 @@ pub async fn get_event_counts_by_monitor(
 ) -> AppResult<crate::dto::response::events::EventCountsByMonitorResponse> {
     use crate::dto::response::events::{EventCountsByMonitorResponse, MonitorEventCount};
 
+    check_count_hours(hours)?;
     let filter = scope.visible_ids(Level::View);
     let counts = events_repo::get_counts_by_monitor(state, hours, filter.as_deref()).await?;
 
