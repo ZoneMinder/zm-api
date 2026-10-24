@@ -30,6 +30,20 @@ pub struct PtzManager {
     cache: RwLock<HashMap<u32, CachedControl>>,
 }
 
+/// Refuse a control address that reaches this server or a cloud metadata
+/// service. Anyone with Monitors Edit sets `ControlAddress`, and PTZ commands
+/// make the server send requests there (natively, or through a zmcontrol
+/// module).
+async fn ensure_target_allowed(address: &str) -> PtzResult<()> {
+    let own = crate::util::net_guard::own_addresses();
+    match crate::util::net_guard::forbidden_target(address, &own).await {
+        Some(ip) => Err(PtzError::InvalidParameter(format!(
+            "control address reaches {ip}, which is this server or a cloud metadata address"
+        ))),
+        None => Ok(()),
+    }
+}
+
 impl PtzManager {
     /// Create a new PTZ manager with the given registry
     pub fn new(registry: PtzRegistry) -> Self {
@@ -71,6 +85,7 @@ impl PtzManager {
 
         // Create new control instance
         let config = self.build_config(monitor, control)?;
+        ensure_target_allowed(&config.address).await?;
         let capabilities = PtzCapabilities::from(control);
         let protocol = control.protocol.as_deref().unwrap_or("unknown");
 
@@ -171,6 +186,7 @@ impl PtzManager {
     ) -> PtzResult<()> {
         let monitor_id = monitor.id;
         let config = self.build_config(monitor, control)?;
+        ensure_target_allowed(&config.address).await?;
         let capabilities = PtzCapabilities::from(control);
         let protocol = control.protocol.as_deref().unwrap_or("unknown");
 

@@ -718,6 +718,17 @@ recognisable path forward.
 
 ### Security
 
+- **PTZ can't be pointed at the server itself.** A monitor's
+  `control_address` is set by anyone with Monitors Edit, and PTZ commands
+  make zm-api send requests there. It took any address, followed redirects,
+  and returned up to 512 bytes of whatever answered in the error, so the
+  address could be used to read local services. A control address that
+  reaches this server (loopback, its own addresses) or a cloud metadata
+  address is now refused with 400, host names included, whether the control
+  is native ONVIF or a zmcontrol module. The ONVIF client no longer follows
+  redirects or uses proxy settings, and transport and parse errors say only
+  that the camera didn't answer, or didn't answer as ONVIF.
+
 - **A role's group grants now limit the groups API, and moving a group needs
   Edit on both parents.** The groups API read only the user's own
   `Groups_Permissions`, so a user whose role was limited to some groups, with

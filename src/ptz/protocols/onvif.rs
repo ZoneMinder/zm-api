@@ -76,11 +76,13 @@ impl OnvifControl {
     /// taken from `config.username` / `config.password`; when both are absent
     /// the client issues unauthenticated requests.
     pub fn new(config: PtzConnectionConfig, capabilities: PtzCapabilities) -> Self {
-        Self::with_transport(
-            OnvifTransport::new(reqwest::Client::new()),
-            config,
-            capabilities,
-        )
+        // No redirects: the address was checked, a redirect's target wasn't.
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_default();
+        Self::with_transport(OnvifTransport::new(client), config, capabilities)
     }
 
     /// Build an [`OnvifControl`] over a caller-supplied [`OnvifTransport`],
@@ -314,8 +316,16 @@ fn map_onvif_error(err: OnvifError) -> PtzError {
             }
         }
         OnvifError::Timeout => PtzError::CommandTimeout("ONVIF request timed out".to_string()),
-        OnvifError::Http(e) => PtzError::CameraOffline(format!("ONVIF transport error: {e}")),
-        OnvifError::Parse(msg) => PtzError::ProtocolError(format!("ONVIF parse error: {msg}")),
+        // The details (the URL, up to 512 bytes of whatever answered) go to
+        // the log, not the caller: they would read back any address.
+        OnvifError::Http(e) => {
+            tracing::warn!(error = %e, "ONVIF PTZ transport error");
+            PtzError::CameraOffline("the camera didn't answer".to_string())
+        }
+        OnvifError::Parse(msg) => {
+            tracing::warn!(error = %msg, "ONVIF PTZ response didn't parse");
+            PtzError::ProtocolError("the camera's answer wasn't ONVIF".to_string())
+        }
         OnvifError::Discovery(msg) => {
             PtzError::ProtocolError(format!("ONVIF discovery error: {msg}"))
         }

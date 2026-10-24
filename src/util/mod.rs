@@ -7,6 +7,7 @@ pub mod hash;
 pub mod key;
 pub mod media_url;
 pub mod middleware;
+pub mod net_guard;
 pub mod password;
 pub mod path;
 pub mod random;
