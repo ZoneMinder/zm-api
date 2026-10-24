@@ -135,9 +135,57 @@ async fn reorient_zones<C: sea_orm::ConnectionTrait>(
     Ok(())
 }
 
+/// The monitor ids a `LinkedMonitors` expression names, or why zmc couldn't
+/// read it. zmc splits the value on `| & ( ) ,` and reads each piece as
+/// `<monitor id>` or `<monitor id>:<zone id>`.
+pub fn linked_monitor_ids(expr: &str) -> Result<Vec<u32>, String> {
+    let id = |digits: &str| -> Option<u32> {
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        digits.parse().ok()
+    };
+    let mut ids = Vec::new();
+    for token in expr.split(['|', '&', '(', ')', ',']) {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let (monitor, zone) = match token.split_once(':') {
+            Some((m, z)) => (m, Some(z)),
+            None => (token, None),
+        };
+        let monitor_id = id(monitor);
+        if monitor_id.is_none() || zone.is_some_and(|z| id(z).is_none()) {
+            return Err(format!(
+                "linked_monitors: '{token}' is not a monitor id or monitor id:zone id"
+            ));
+        }
+        ids.extend(monitor_id);
+    }
+    Ok(ids)
+}
+
+/// `linked_monitors` must parse, and name only monitors the caller can see.
+/// A hidden monitor gets the same answer as one that doesn't exist.
+fn check_linked_monitors(expr: Option<&str>, scope: &MonitorScope) -> AppResult<()> {
+    let Some(expr) = expr else {
+        return Ok(());
+    };
+    let ids = linked_monitor_ids(expr).map_err(AppError::BadRequestError)?;
+    if let Some(id) = ids.into_iter().find(|&id| !scope.allows(id, Level::View)) {
+        return Err(AppError::BadRequestError(format!(
+            "linked_monitors: monitor {id} not found"
+        )));
+    }
+    Ok(())
+}
+
 pub async fn create(state: &AppState, req: CreateMonitorRequest) -> AppResult<MonitorResponse> {
     // Name only: the request carries camera RTSP/ONVIF credentials.
     info!("Creating new monitor: {}.", req.name);
+    // Creating needs unrestricted access, so every monitor is visible.
+    check_linked_monitors(req.linked_monitors.as_deref(), &MonitorScope::All)?;
 
     // Convert string values to their corresponding enum types
     let monitor_type = req.r#type.clone();
@@ -362,6 +410,7 @@ pub async fn update(
     // Id only: the request carries camera RTSP/ONVIF credentials.
     info!("Updating monitor with ID: {id}.");
     ensure_visible(scope, id, Level::Edit)?;
+    check_linked_monitors(req.linked_monitors.as_deref(), scope)?;
 
     // Fetch the monitor through the repository
     let monitor_model = repo::monitors::find_by_id(state.db(), id)
@@ -1098,5 +1147,31 @@ mod event_command_tests {
             ..Default::default()
         };
         assert!(ensure_may_set_event_commands(&admin, [Some("x"), Some("y")], ["", ""]).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod linked_monitor_tests {
+    use super::linked_monitor_ids;
+
+    #[test]
+    fn linked_monitor_ids_follow_zmcs_grammar() {
+        assert_eq!(linked_monitor_ids(""), Ok(vec![]));
+        assert_eq!(linked_monitor_ids("3"), Ok(vec![3]));
+        assert_eq!(linked_monitor_ids("1,2"), Ok(vec![1, 2]));
+        assert_eq!(linked_monitor_ids("(1:4|2) & 3"), Ok(vec![1, 2, 3]));
+        for bad in [
+            "abc",
+            "1;2",
+            "1:x",
+            "1::2",
+            ":3",
+            "-1",
+            "99999999999",
+            "1 2",
+            "1:",
+        ] {
+            assert!(linked_monitor_ids(bad).is_err(), "{bad}");
+        }
     }
 }

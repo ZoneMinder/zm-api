@@ -718,6 +718,15 @@ recognisable path forward.
 
 ### Security
 
+- **`linked_monitors` can only name monitors you can see.** A user who could
+  edit one monitor could link it to any other, including monitors they're
+  denied, and so record events off a hidden camera's alarms. `POST` and
+  `PATCH /api/v3/monitors` now refuse (400) a link to a monitor the caller
+  can't see, with the same message as for one that doesn't exist. The value
+  must also be an expression zmc reads: monitor ids, or `id:zone`, joined by
+  `|`, `&`, `,` and parentheses. ZoneMinder's zmc stops on a piece that isn't
+  a number.
+
 - **Only a monitor's editors can stop its live stream.** `DELETE
   /api/v3/live/{monitor_id}/stop` ends the session for every viewer, but
   Stream View was enough to call it, so any viewer could keep cutting off
