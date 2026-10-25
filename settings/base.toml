@@ -94,6 +94,11 @@ auth_rate_limit_burst = 10
 # These placeholder values trigger zm.conf fallback
 host = "localhost"
 port = 3306
+# Unix socket, instead of TCP. Unset with host = "localhost", the standard
+# MariaDB/MySQL socket is used when one exists, as libmysqlclient (and so
+# ZoneMinder) does: a 'zmuser'@'localhost' grant matches socket connections
+# only. ZM_DB_HOST=localhost:/path/to/socket in zm.conf sets it too.
+# socket = "/run/mysqld/mysqld.sock"
 username = "username"
 password = "password"
 database_name = "database_name"

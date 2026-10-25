@@ -35,12 +35,13 @@ fn database_url(args: &[String]) -> String {
 fn zmconf_url() -> Option<String> {
     let c = zm_api::configure::zmconf::ZmConfig::load();
     let (user, name) = (c.db_user()?, c.db_name()?);
-    Some(zm_api::configure::db::DatabaseConfig::create_url(
+    Some(zm_api::configure::db::DatabaseConfig::url_for_host(
         user,
         c.db_pass().unwrap_or_default(),
         c.db_host().unwrap_or("localhost"),
         c.db_port().unwrap_or(3306),
         name,
+        c.db_socket(),
     ))
 }
 
