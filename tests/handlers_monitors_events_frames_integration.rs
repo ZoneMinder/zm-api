@@ -45,7 +45,7 @@ fn bearer_for(uid: u32) -> String {
 
 fn build_app(db: DatabaseConnection) -> axum::Router {
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    zm_api::routes::create_router_app(state)
+    common::schema::checked(zm_api::routes::create_router_app(state))
 }
 
 /// GH #19: ZoneMinder's own default sentinels must pass create validation:

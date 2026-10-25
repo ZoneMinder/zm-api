@@ -1,6 +1,8 @@
 //! Tests for the cross-cutting HTTP middleware stack: security headers and
 //! response compression. Run without a database.
 
+mod common;
+
 use axum::{
     body::Body,
     http::{header, Request},
@@ -11,7 +13,7 @@ use tower::util::ServiceExt; // for `oneshot`
 fn router() -> axum::Router {
     let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    zm_api::routes::create_router_app(state)
+    common::schema::checked(zm_api::routes::create_router_app(state))
 }
 
 #[tokio::test]

@@ -28,7 +28,7 @@ pub async fn health_check() -> AppResult<Json<MessageResponse>> {
     responses(
         (status = 200, description = "Server timezone and date/time formats", body = LocaleResponse),
         (status = 401, description = "Unauthorized", body = crate::error::AppResponseError),
-        (status = 500, description = "Internal server error", body = MessageResponse)
+        (status = 500, description = "Internal server error", body = crate::error::AppResponseError)
     ),
     tag = "Server",
     security(("jwt" = []))
@@ -42,7 +42,7 @@ pub async fn get_locale(State(state): State<AppState>) -> AppResult<Json<LocaleR
     path = "/api/v3/host/getVersion",
     responses(
         (status = 200, description = "Get ZoneMinder and API version information", body = VersionResponse),
-        (status = 500, description = "Internal server error", body = MessageResponse)
+        (status = 500, description = "Internal server error", body = crate::error::AppResponseError)
     ),
     tag = "Server"
 )]
@@ -76,8 +76,8 @@ pub async fn get_version(State(state): State<AppState>) -> AppResult<Json<Versio
     ),
     responses(
         (status = 200, description = "System control action performed", body = MessageResponse),
-        (status = 400, description = "Invalid action", body = MessageResponse),
-        (status = 500, description = "Failed to perform action", body = MessageResponse)
+        (status = 400, description = "Invalid action", body = crate::error::AppResponseError),
+        (status = 500, description = "Failed to perform action", body = crate::error::AppResponseError)
     ),
     tag = "Server",
     summary = "Control the ZoneMinder system (restart/stop/start)",

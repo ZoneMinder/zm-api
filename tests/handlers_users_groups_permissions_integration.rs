@@ -31,7 +31,7 @@ fn auth_header() -> String {
 
 fn build_app(db: DatabaseConnection) -> axum::Router {
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    zm_api::routes::create_router_app(state)
+    common::schema::checked(zm_api::routes::create_router_app(state))
 }
 
 async fn create_monitor_db(db: &DatabaseConnection) -> Result<monitors::Model, DbErr> {

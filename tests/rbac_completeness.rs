@@ -13,6 +13,8 @@
 //! `UNGATED` below, which doubles as the documentation of that decision. Adding
 //! to that list should take a reviewer noticing.
 
+mod common;
+
 use axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -73,7 +75,7 @@ fn ci() -> axum::extract::ConnectInfo<std::net::SocketAddr> {
 fn router() -> axum::Router {
     let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    zm_api::routes::create_router_app(state)
+    common::schema::checked(zm_api::routes::create_router_app(state))
 }
 
 /// Fill path parameters so the request routes to the handler. The value never

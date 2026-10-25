@@ -2,6 +2,8 @@
 //! authentication middleware. These run without a database — the auth layer
 //! rejects the request before any handler (and therefore any DB query) runs.
 
+mod common;
+
 use axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -12,7 +14,7 @@ use tower::util::ServiceExt; // for `oneshot`
 fn router() -> axum::Router {
     let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    zm_api::routes::create_router_app(state)
+    common::schema::checked(zm_api::routes::create_router_app(state))
 }
 
 async fn status_of(method: &str, uri: &str) -> StatusCode {

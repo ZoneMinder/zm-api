@@ -1,3 +1,5 @@
+mod common;
+
 use axum::body::{self, Body};
 use axum::http::{header, Request, StatusCode};
 use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Value};
@@ -40,7 +42,7 @@ async fn test_list_devices() {
         .append_query_results::<DeviceModel, _, _>(vec![devices])
         .into_connection();
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
 
     let response = app
         .oneshot(
@@ -69,7 +71,7 @@ async fn test_get_device_by_id() {
         .append_query_results::<DeviceModel, _, _>(vec![vec![device]])
         .into_connection();
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
 
     let response = app
         .oneshot(
@@ -97,7 +99,7 @@ async fn test_get_device_not_found() {
         .append_query_results::<DeviceModel, _, _>(vec![vec![]])
         .into_connection();
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
 
     let response = app
         .oneshot(
@@ -121,7 +123,7 @@ async fn test_delete_device() {
         }])
         .into_connection();
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
 
     let response = app
         .oneshot(
@@ -145,7 +147,7 @@ async fn test_delete_device_not_found() {
         }])
         .into_connection();
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
 
     let response = app
         .oneshot(

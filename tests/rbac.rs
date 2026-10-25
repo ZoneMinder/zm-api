@@ -2,6 +2,8 @@
 //!
 //! RBAC rejects requests before any handler runs, so these need no database.
 
+mod common;
+
 use axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -14,7 +16,7 @@ use zm_api::util::authz::{Level, UserPermissions};
 fn router() -> axum::Router {
     let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    zm_api::routes::create_router_app(state)
+    common::schema::checked(zm_api::routes::create_router_app(state))
 }
 
 fn token(perms: UserPermissions) -> String {

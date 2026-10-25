@@ -24,7 +24,8 @@ pub struct MonitorPresetResponse {
     pub width: Option<u16>,
     pub height: Option<u16>,
     pub palette: Option<u32>,
-    #[schema(value_type = Option<f64>)]
+    /// A decimal string such as `"5.000"`, as other decimals in the API.
+    #[schema(value_type = Option<String>, example = "5.000")]
     pub max_fps: Option<Decimal>,
     pub controllable: u8,
     pub control_id: Option<String>,

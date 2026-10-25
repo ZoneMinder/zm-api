@@ -361,6 +361,19 @@ fn apply_common_middleware(
     router.layer(stack)
 }
 
+/// The OpenAPI document `/api-docs/openapi.json` serves, before any proxy
+/// prefix is applied: the derived [`ApiDoc`] plus feature-gated fragments
+/// (utoipa's derive can't `#[cfg]` individual path or schema entries, so the
+/// ONVIF discovery fragment is merged here). Tests validate responses against
+/// it.
+pub fn served_openapi() -> utoipa::openapi::OpenApi {
+    #[allow(unused_mut)]
+    let mut openapi = ApiDoc::openapi();
+    #[cfg(feature = "onvif-discovery")]
+    openapi.merge(crate::handlers::discovery::DiscoveryApiDoc::openapi());
+    openapi
+}
+
 pub fn create_router_app(state: AppState) -> Router {
     // The state's config, not the process-wide CONFIG: they are the same in
     // production, and a test that adjusts the state's sees it take effect.
@@ -616,13 +629,7 @@ pub fn create_router_app(state: AppState) -> Router {
             crate::service::media_grant::media_grant_layer,
         ));
 
-    // Build the served OpenAPI document, merging in feature-gated fragments
-    // (utoipa's derive cannot `#[cfg]` individual path/schema entries, so the
-    // ONVIF discovery fragment is composed here at runtime).
-    #[allow(unused_mut)]
-    let mut openapi = ApiDoc::openapi();
-    #[cfg(feature = "onvif-discovery")]
-    openapi.merge(crate::handlers::discovery::DiscoveryApiDoc::openapi());
+    let mut openapi = served_openapi();
     // Behind a proxy prefix, Swagger UI must fetch the document, and send
     // "try it out" requests, through that prefix.
     let prefix = crate::configure::server::public_prefix();
