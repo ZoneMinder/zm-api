@@ -259,6 +259,11 @@ recognisable path forward.
 
 ### Fixed
 
+- **HTTP/2 with Let's Encrypt (ACME).** In ACME mode the TLS config came
+  from rustls-acme's default, which advertises no ALPN protocol, so browsers
+  spoke HTTP/1.1 and its six connections per host held back HLS grids. It
+  now offers `h2` and `http/1.1`, as certificate-file mode already did.
+
 - **`localhost` reaches MariaDB through its socket on openSUSE too.** zm-api
   connects to `localhost` through the standard socket, as libmysqlclient does
   (#217), but its list lacked openSUSE's `/run/mysql/mysql.sock`, so it fell

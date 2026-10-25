@@ -196,9 +196,9 @@ fn resolve_allowed_origins(
 /// the specific matching origin back instead, which is credentials-safe and,
 /// for `localhost`, does not expose the API to other hosts. In production set
 /// `server.allowed_origins` to the exact deployed front-end origin(s).
-fn build_cors_layer() -> CorsLayer {
+fn build_cors_layer(config: &crate::configure::AppConfig) -> CorsLayer {
     let (origins, source) = resolve_allowed_origins(
-        &crate::constant::CONFIG.server.allowed_origins,
+        &config.server.allowed_origins,
         std::env::var(LEGACY_ORIGINS_ENV).ok(),
     );
 
@@ -281,8 +281,11 @@ fn parse_origin_rules(raw: &str) -> Vec<OriginRule> {
 ///
 /// Outermost → innermost: tracing, security headers, body-size limit,
 /// optional per-IP rate limiting, then CORS.
-fn apply_common_middleware(router: Router<AppState>, cors: CorsLayer) -> Router<AppState> {
-    let cfg = &*crate::constant::CONFIG;
+fn apply_common_middleware(
+    router: Router<AppState>,
+    cors: CorsLayer,
+    cfg: &crate::configure::AppConfig,
+) -> Router<AppState> {
     let mw = &cfg.server.middleware;
     let tls_enabled = cfg.server.tls.as_ref().is_some_and(|t| t.enabled)
         || cfg.server.acme.as_ref().is_some_and(|a| a.enabled);
@@ -359,7 +362,10 @@ fn apply_common_middleware(router: Router<AppState>, cors: CorsLayer) -> Router<
 }
 
 pub fn create_router_app(state: AppState) -> Router {
-    let cors = build_cors_layer();
+    // The state's config, not the process-wide CONFIG: they are the same in
+    // production, and a test that adjusts the state's sees it take effect.
+    let config = state.config.clone();
+    let cors = build_cors_layer(&config);
 
     // `auth` and `server` expose a mix of public and protected endpoints
     // (login, health check, version) and manage their own auth per-route, so
@@ -370,7 +376,7 @@ pub fn create_router_app(state: AppState) -> Router {
         // Dedicated, tighter rate limit on the authentication surface so
         // credential brute-forcing is throttled even when the global limiter
         // is disabled. Same peer-IP-by-default keying as the global limiter.
-        let mw = &crate::constant::CONFIG.server.middleware;
+        let mw = &config.server.middleware;
         let auth_rl = if mw.auth_rate_limiting_enabled() {
             GovernorConfigBuilder::default()
                 .per_second(mw.auth_rate_limit_period_secs)
@@ -543,7 +549,7 @@ pub fn create_router_app(state: AppState) -> Router {
     let report_routes = protect(reports::add_report_routes(Router::new()), Feature::System);
     // `[daemon].enable_rest_api = false` leaves daemon/system control to the
     // legacy socket only; the routes are not registered at all (#88).
-    let daemon_routes = if crate::constant::CONFIG.daemon.enable_rest_api {
+    let daemon_routes = if config.daemon.enable_rest_api {
         protect(daemon::add_daemon_routes(Router::new()), Feature::System)
     } else {
         Router::new()
@@ -736,7 +742,7 @@ pub fn create_router_app(state: AppState) -> Router {
         app.fallback(any(fallback_handler))
     };
 
-    apply_common_middleware(app, cors).with_state(state)
+    apply_common_middleware(app, cors, &config).with_state(state)
 }
 
 /// Serve a file from the UI root, falling back to `index.html` so client-side
