@@ -13,7 +13,6 @@ mod common;
 
 use std::sync::Arc;
 
-use common::test_db::get_test_db;
 use sea_orm::{ConnectionTrait, DatabaseConnection, Statement};
 use zm_api::configure::maintenance::{AuditConfig, StatsConfig};
 use zm_api::service::maintenance::{audit::AuditService, stats::StatsService};
@@ -117,9 +116,11 @@ async fn still_open(db: &DatabaseConnection, event: u64) -> bool {
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn an_open_event_on_a_live_capture_daemon_is_left_alone() {
+    // Maintenance and retention passes act on the whole database.
+    let iso = common::isolated::IsolatedDb::create().await;
     let _serial = SERIAL.lock().await;
     const MON: u32 = MON_LIVE;
-    let db = Arc::new(get_test_db().await.expect("test db"));
+    let db = Arc::new(iso.connect().await);
     cleanup(&db, MON, 9_930_040, 9_930_040).await;
 
     // Live before the event exists: the empty-event test counts candidates
@@ -174,9 +175,11 @@ async fn an_open_event_on_a_live_capture_daemon_is_left_alone() {
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn an_open_event_superseded_on_a_live_monitor_is_closed() {
+    // Maintenance and retention passes act on the whole database.
+    let iso = common::isolated::IsolatedDb::create().await;
     let _serial = SERIAL.lock().await;
     const MON: u32 = MON_SUPERSEDED;
-    let db = Arc::new(get_test_db().await.expect("test db"));
+    let db = Arc::new(iso.connect().await);
     cleanup(&db, MON, 9_930_050, 9_930_051).await;
 
     mark_capture_live(&db, MON).await;
@@ -224,9 +227,11 @@ fn audit_config(dry_run: bool) -> AuditConfig {
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn empty_events_are_deleted_but_only_when_old_and_unarchived() {
+    // Maintenance and retention passes act on the whole database.
+    let iso = common::isolated::IsolatedDb::create().await;
     let _serial = SERIAL.lock().await;
     const MON: u32 = MON_EMPTY;
-    let db = Arc::new(get_test_db().await.expect("test db"));
+    let db = Arc::new(iso.connect().await);
     cleanup(&db, MON, 9_930_001, 9_930_004).await;
 
     // 1: old, no frames, not archived  -> must be deleted
@@ -302,9 +307,11 @@ async fn empty_events_are_deleted_but_only_when_old_and_unarchived() {
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn orphaned_frames_are_removed_and_live_ones_kept() {
+    // Maintenance and retention passes act on the whole database.
+    let iso = common::isolated::IsolatedDb::create().await;
     let _serial = SERIAL.lock().await;
     const MON: u32 = MON_FRAMES;
-    let db = Arc::new(get_test_db().await.expect("test db"));
+    let db = Arc::new(iso.connect().await);
     cleanup(&db, MON, 9_930_010, 9_930_011).await;
 
     exec(
@@ -352,9 +359,11 @@ async fn orphaned_frames_are_removed_and_live_ones_kept() {
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn an_unclosed_event_is_closed_from_its_frames() {
+    // Maintenance and retention passes act on the whole database.
+    let iso = common::isolated::IsolatedDb::create().await;
     let _serial = SERIAL.lock().await;
     const MON: u32 = MON_UNCLOSED;
-    let db = Arc::new(get_test_db().await.expect("test db"));
+    let db = Arc::new(iso.connect().await);
     cleanup(&db, MON, 9_930_020, 9_930_020).await;
 
     exec(
@@ -423,9 +432,11 @@ async fn an_unclosed_event_is_closed_from_its_frames() {
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn counter_resync_corrects_drift() {
+    // Maintenance and retention passes act on the whole database.
+    let iso = common::isolated::IsolatedDb::create().await;
     let _serial = SERIAL.lock().await;
     const MON: u32 = MON_COUNTERS;
-    let db = Arc::new(get_test_db().await.expect("test db"));
+    let db = Arc::new(iso.connect().await);
     cleanup(&db, MON, 9_930_030, 9_930_031).await;
 
     exec(
@@ -480,12 +491,14 @@ async fn counter_resync_corrects_drift() {
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn a_stats_pass_runs_clean_against_a_real_schema() {
+    // Maintenance and retention passes act on the whole database.
+    let iso = common::isolated::IsolatedDb::create().await;
     let _serial = SERIAL.lock().await;
     // Every statement zmstats issues, executed once. This does not assert on
     // counts — the shared test database has other tests' rows in it — but it
     // does prove the SQL is valid against the real schema, which is the failure
     // mode that matters for hand-written statements.
-    let db = Arc::new(get_test_db().await.expect("test db"));
+    let db = Arc::new(iso.connect().await);
     let stats = StatsService::new(
         Arc::clone(&db),
         StatsConfig {
@@ -585,8 +598,10 @@ async fn drop_storage(db: &DatabaseConnection, id: u16) {
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn an_orphan_directory_is_quarantined_and_a_live_one_is_not() {
+    // Maintenance and retention passes act on the whole database.
+    let iso = common::isolated::IsolatedDb::create().await;
     let _serial = SERIAL.lock().await;
-    let db = Arc::new(get_test_db().await.expect("test db"));
+    let db = Arc::new(iso.connect().await);
     let root = short_root("orphan");
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
@@ -644,8 +659,10 @@ async fn an_orphan_directory_is_quarantined_and_a_live_one_is_not() {
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn a_dry_run_moves_nothing() {
+    // Maintenance and retention passes act on the whole database.
+    let iso = common::isolated::IsolatedDb::create().await;
     let _serial = SERIAL.lock().await;
-    let db = Arc::new(get_test_db().await.expect("test db"));
+    let db = Arc::new(iso.connect().await);
     let root = short_root("dry");
     let _ = std::fs::remove_dir_all(&root);
 
@@ -673,10 +690,12 @@ async fn a_dry_run_moves_nothing() {
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn an_unmounted_storage_refuses_rather_than_orphaning_everything() {
+    // Maintenance and retention passes act on the whole database.
+    let iso = common::isolated::IsolatedDb::create().await;
     let _serial = SERIAL.lock().await;
     // The scenario that makes this dangerous: a volume that failed to mount
     // presents an empty directory, and every event looks orphaned.
-    let db = Arc::new(get_test_db().await.expect("test db"));
+    let db = Arc::new(iso.connect().await);
     let root = short_root("unmnt");
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
@@ -720,10 +739,12 @@ async fn an_unmounted_storage_refuses_rather_than_orphaning_everything() {
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn an_unidentifiable_directory_is_reported_but_left_alone() {
+    // Maintenance and retention passes act on the whole database.
+    let iso = common::isolated::IsolatedDb::create().await;
     let _serial = SERIAL.lock().await;
     // zmaudit reconstructs a timestamp from the path and deletes these. Without
     // an id there is no way to ask whether it is orphaned, so it stays.
-    let db = Arc::new(get_test_db().await.expect("test db"));
+    let db = Arc::new(iso.connect().await);
     let root = short_root("unid");
     let _ = std::fs::remove_dir_all(&root);
 
