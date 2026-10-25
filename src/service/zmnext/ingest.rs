@@ -252,7 +252,7 @@ impl EventIngestor {
             event_id: Set(event_id),
             frame_id: Set(frame_no),
             r#type: Set(FrameType::Alarm),
-            time_stamp: Set(when.and_utc()),
+            time_stamp: Set(crate::util::utc_to_timestamp(when.and_utc())),
             delta: Set(delta),
             score: Set(score),
             ..Default::default()

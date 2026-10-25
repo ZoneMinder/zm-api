@@ -23,7 +23,8 @@ async fn insert_status(db: &sea_orm::DatabaseConnection, monitor_id: u32) {
         capture_fps: Set(Decimal::new(1500, 2)),
         analysis_fps: Set(Decimal::new(1480, 2)),
         capture_bandwidth: Set(1024),
-        updated_on: Set(chrono::Utc::now()),
+        // Local wall-clock, as zmc's NOW() writes it in a SYSTEM-zone session.
+        updated_on: Set(zm_api::util::utc_to_timestamp(chrono::Utc::now())),
     }
     .insert(db)
     .await
@@ -84,6 +85,19 @@ async fn get_monitor_status_returns_the_row() {
     let body: MonitorStatusResponse = resp.json();
     assert_eq!(body.monitor_id, monitor.id);
     assert_eq!(body.status, "Connected");
+    // A row written just now must read back as just now, not shifted by the
+    // server's UTC offset: zm-web marks a monitor Offline when it is older
+    // than 90 s.
+    let updated = chrono::DateTime::parse_from_rfc3339(&body.updated_on).expect("RFC 3339");
+    let age = chrono::Utc::now()
+        .signed_duration_since(updated)
+        .num_seconds()
+        .abs();
+    assert!(
+        age < 60,
+        "updated_on {} is {age}s from now",
+        body.updated_on
+    );
 }
 
 #[tokio::test]

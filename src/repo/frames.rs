@@ -110,7 +110,7 @@ pub async fn create(db: &DatabaseConnection, req: &CreateFrameRequest) -> AppRes
         event_id: Set(req.event_id),
         frame_id: Set(req.frame_id),
         r#type: Set(req.r#type.clone()),
-        time_stamp: Set(time_stamp.and_utc()),
+        time_stamp: Set(crate::util::utc_to_timestamp(time_stamp.and_utc())),
         delta: Set(req.delta),
         score: Set(req.score),
         ..Default::default()

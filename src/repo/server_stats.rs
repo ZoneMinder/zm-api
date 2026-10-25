@@ -76,7 +76,7 @@ pub async fn create(
     let am = ActiveModel {
         id: Default::default(),
         server_id: Set(req.server_id),
-        time_stamp: Set(Utc::now()),
+        time_stamp: Set(crate::util::utc_to_timestamp(Utc::now())),
         cpu_load: Set(cpu_load),
         cpu_user_percent: Set(cpu_user_percent),
         cpu_nice_percent: Set(cpu_nice_percent),

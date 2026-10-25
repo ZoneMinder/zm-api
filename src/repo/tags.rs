@@ -37,7 +37,7 @@ pub async fn create(db: &DatabaseConnection, req: &CreateTagRequest) -> AppResul
     let am = ActiveModel {
         id: Default::default(),
         name: Set(req.name.clone()),
-        create_date: Set(req.create_date),
+        create_date: Set(req.create_date.map(crate::util::utc_to_timestamp)),
         ..Default::default()
     };
     Ok(am.insert(db).await?)
@@ -57,7 +57,7 @@ pub async fn update(
         am.name = Set(v.clone());
     }
     if let Some(v) = req.create_date {
-        am.create_date = Set(Some(v));
+        am.create_date = Set(Some(crate::util::utc_to_timestamp(v)));
     }
 
     let updated = am.update(db).await?;

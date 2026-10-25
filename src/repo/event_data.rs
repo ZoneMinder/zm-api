@@ -60,7 +60,7 @@ pub async fn create(
         .as_ref()
         .map(|s| {
             DateTime::parse_from_rfc3339(s)
-                .map(|dt| dt.with_timezone(&Utc))
+                .map(|dt| crate::util::utc_to_timestamp(dt.with_timezone(&Utc)))
                 .map_err(|e| AppError::BadRequestError(format!("Invalid timestamp format: {}", e)))
         })
         .transpose()?;

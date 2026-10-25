@@ -25,7 +25,7 @@ impl From<&EventTagModel> for EventTagResponse {
         Self {
             tag_id: model.tag_id,
             event_id: model.event_id,
-            assigned_date: model.assigned_date,
+            assigned_date: model.assigned_date.map(crate::util::timestamp_to_utc),
             assigned_by: model.assigned_by,
         }
     }

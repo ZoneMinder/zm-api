@@ -44,7 +44,7 @@ impl From<&Model> for NotificationResponse {
                 .last_notified_at
                 .map(|t| DateTimeWrapper(naive_local_to_utc(t))),
             created_on: m.created_on.map(|t| DateTimeWrapper(naive_local_to_utc(t))),
-            updated_on: DateTimeWrapper(m.updated_on),
+            updated_on: DateTimeWrapper(crate::util::timestamp_to_utc(m.updated_on)),
         }
     }
 }

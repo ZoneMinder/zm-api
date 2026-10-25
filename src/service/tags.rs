@@ -95,7 +95,7 @@ pub async fn get_by_id_with_events(
     Ok(TagDetailResponse {
         id: tag.id,
         name: tag.name,
-        create_date: tag.create_date,
+        create_date: tag.create_date.map(crate::util::timestamp_to_utc),
         events: event_summaries,
         total_events: total,
         per_page: page_size,
