@@ -29404,10 +29404,11 @@
           },
           "max_fps": {
             "type": [
-              "number",
+              "string",
               "null"
             ],
-            "format": "double"
+            "description": "A decimal string such as `\"5.000\"`, as other decimals in the API.",
+            "example": "5.000"
           },
           "method": {
             "type": [

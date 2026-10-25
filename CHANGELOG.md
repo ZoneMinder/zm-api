@@ -267,8 +267,10 @@ recognisable path forward.
   document, and are now in it. `GET /host/getVersion` and
   `POST /server/control/{action}` documented their errors as
   `MessageResponse`, and `GET /daemons` its 503 with no body; they now say
-  `AppResponseError`, which is what they send. Integration tests check
-  every JSON response against the document (#237).
+  `AppResponseError`, which is what they send. `MonitorPresetResponse.max_fps`
+  was documented as a number but has always been sent as a decimal string
+  (`"5.000"`); the document now says string. Integration tests check every
+  JSON response against the document (#237).
 
 - **The stream socket reader identifies codecs by name.** zmc's HELLO now
   carries FFmpeg's codec name (`hevc`, `aac`, tag `0x0B`, ZoneMinder#5336).
