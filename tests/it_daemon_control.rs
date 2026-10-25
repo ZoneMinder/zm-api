@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 use zm_api::daemon::{DaemonConfig, DaemonManager};
 
 /// A `zmc` that logs `start <args>`, `hup` and `winch`, and exits on SIGTERM.
+/// The traps go first: a signal sent once `start` is logged must find them.
 fn fake_zmc(dir: &Path) -> PathBuf {
     let log = dir.join("zmc.log");
     let script = dir.join("zmc");
@@ -27,10 +28,10 @@ fn fake_zmc(dir: &Path) -> PathBuf {
         &script,
         format!(
             "#!/bin/sh\n\
-             echo \"start $*\" >> '{log}'\n\
              trap 'echo hup >> \"{log}\"' HUP\n\
              trap 'echo winch >> \"{log}\"' WINCH\n\
              trap 'exit 0' TERM\n\
+             echo \"start $*\" >> '{log}'\n\
              while true; do sleep 1 & wait $!; done\n",
             log = log.display()
         ),
