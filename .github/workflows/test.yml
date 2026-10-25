@@ -234,6 +234,8 @@ jobs:
         run: cargo test --no-fail-fast --test '*' -- --include-ignored
         env:
           DATABASE_URL: mysql://zm_test_user:zm_test_pass@127.0.0.1:3307/zm_test
+          # Tests that act on the whole database get one of their own (tests/common/isolated.rs).
+          TEST_DATABASE_ADMIN_URL: mysql://root:test_root_pass@127.0.0.1:3307
 
   lint:
     name: Rustfmt & Clippy
