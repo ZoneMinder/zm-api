@@ -25,7 +25,10 @@ async fn a_response_matching_its_schema_passes() {
         "/api/v3/server/health_check",
         get(|| async { Json(json!({ "message": "ok" })) }),
     );
-    assert_eq!(call(router, "/api/v3/server/health_check").await, StatusCode::OK);
+    assert_eq!(
+        call(router, "/api/v3/server/health_check").await,
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
@@ -52,9 +55,6 @@ async fn an_error_body_of_the_wrong_shape_fails() {
 #[tokio::test]
 #[should_panic(expected = "unknown-route")]
 async fn an_undocumented_route_that_answers_fails() {
-    let router = Router::new().route(
-        "/api/v3/not-in-the-spec",
-        get(|| async { Json(json!({})) }),
-    );
+    let router = Router::new().route("/api/v3/not-in-the-spec", get(|| async { Json(json!({})) }));
     call(router, "/api/v3/not-in-the-spec").await;
 }
