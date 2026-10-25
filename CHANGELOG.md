@@ -259,6 +259,12 @@ recognisable path forward.
 
 ### Fixed
 
+- **`localhost` reaches MariaDB through its socket on openSUSE too.** zm-api
+  connects to `localhost` through the standard socket, as libmysqlclient does
+  (#217), but its list lacked openSUSE's `/run/mysql/mysql.sock`, so it fell
+  back to TCP. On a server with `skip-name-resolve` the `zmuser@localhost`
+  grant then refused it and zm-api didn't start.
+
 - **The stream socket reader identifies codecs by name.** zmc's HELLO now
   carries FFmpeg's codec name (`hevc`, `aac`, tag `0x0B`, ZoneMinder#5336).
   zm-api uses it ahead of the numeric `AVCodecID`, which changes between
