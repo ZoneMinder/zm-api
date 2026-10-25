@@ -19,6 +19,14 @@ resolve those directives by inlining these files when building the test schema.
 | `AI_Models.sql` | AI detection tables (`AI_Datasets`, `AI_Models`, `AI_Object_Classes`, `AI_Detection_Settings`, `AI_Detections`) |
 | `coco_dataset.sql` | COCO object-class seed data |
 
+`zm_config.sql` is generated, not vendored: `scripts/generate-zm-config.sh` runs
+ZoneMinder's own `zmconfgen.pl` over its `ConfigData.pm` and keeps the `Config`
+rows a fresh install gets (the packaged `zm_create.sql` has them; the `.in` file
+doesn't). The setup scripts append it after the schema so the test database has a
+real `Config` table. Its option text comes from ZoneMinder, so the GPL-2.0 note
+above applies to it too. Regenerate it when the schema mirror moves to a new
+ZoneMinder version.
+
 These files, together with `../zm_create.sql.in`, are also the input to
 `scripts/gen_baseline_migration.py`, which generates the baseline SeaORM
 migration (`src/migration/m00000000_000001_zm_baseline/`).

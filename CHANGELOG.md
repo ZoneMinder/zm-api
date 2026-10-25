@@ -271,6 +271,11 @@ recognisable path forward.
   was documented as a number but has always been sent as a decimal string
   (`"5.000"`); the document now says string. Integration tests check every
   JSON response against the document (#237).
+- **Event video byte ranges follow HTTP.** `GET /events/{id}/video` and
+  `/stream/video.mp4` answered a range past the end of the file with 400; it
+  is now 416 with `Content-Range: bytes */<size>`, as players expect. A range
+  whose last byte is past the end (`bytes=0-99999999`) now returns the rest
+  of the file instead of 400 (RFC 9110 §14.1.2).
 - **Changing a monitor you can see but not edit is 403, not 404.** A user
   with a View row on a monitor got 404 from `PATCH /monitors/{id}` (and the
   other monitor writes) although `GET` showed it. A monitor outside the

@@ -4,6 +4,7 @@ pub mod fake_zmc;
 pub mod fixtures;
 pub mod harness;
 pub mod schema;
+pub mod media;
 pub mod test_db;
 pub mod users;
 
