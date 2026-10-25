@@ -31,7 +31,13 @@ done
 
 unit=mariadb.service
 systemctl cat "$unit" >/dev/null 2>&1 || unit=mysql.service
-systemctl enable --now "$unit"
+# Restart, not just start: the Debian packages start the server on install,
+# before the configuration above existed.
+systemctl enable "$unit" >/dev/null 2>&1
+systemctl restart "$unit"
 check "database server is running" wait_until 60 svc_active "$unit"
+client=mariadb
+command -v mariadb >/dev/null 2>&1 || client=mysql
+check_eq "skip-name-resolve is on" "1" "$("$client" -uroot -Nse 'SELECT @@skip_name_resolve')"
 
 finish

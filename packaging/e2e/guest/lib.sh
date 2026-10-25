@@ -249,7 +249,9 @@ has_chromium() { command -v chromium >/dev/null 2>&1; }
 # ZoneMinder's database account works through the socket only, as on a host
 # with skip-name-resolve (database.sh).
 tcp_login_refused() {
-  ! mariadb -h127.0.0.1 --protocol=TCP -u"$(zm_conf ZM_DB_USER)" -p"$(zm_conf ZM_DB_PASS)" \
+  local client=mariadb
+  command -v mariadb >/dev/null 2>&1 || client=mysql
+  ! "$client" -h127.0.0.1 --protocol=TCP -u"$(zm_conf ZM_DB_USER)" -p"$(zm_conf ZM_DB_PASS)" \
     -e 'SELECT 1' >/dev/null 2>&1
 }
 # Point the monitor at another camera path and restart zmc on it.
