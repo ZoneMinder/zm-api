@@ -128,8 +128,18 @@ setup_mysql() {
     schema_sql=$(process_schema)
     
     log_info "Loading ZoneMinder schema into MySQL..."
-    mysql -h"$MYSQL_HOST" -P"$MYSQL_PORT" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" < "$schema_sql" 2>&1 | grep -v "ERROR 1304" || true
-    
+    # ERROR 1304 (a procedure that already exists) is expected on a re-run.
+    # Any other error leaves the schema half loaded, so stop here rather than
+    # let the tests fail later for no visible reason.
+    local errors
+    errors=$(mysql -h"$MYSQL_HOST" -P"$MYSQL_PORT" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" \
+        "$MYSQL_DATABASE" < "$schema_sql" 2>&1 | grep "^ERROR" | grep -v "ERROR 1304" || true)
+    if [ -n "$errors" ]; then
+        log_error "Loading the schema failed:"
+        echo "$errors" >&2
+        return 1
+    fi
+
     log_info "✅ MySQL database ready!"
     log_info "   Connection: mysql://$MYSQL_USER:****@$MYSQL_HOST:$MYSQL_PORT/$MYSQL_DATABASE"
 }
