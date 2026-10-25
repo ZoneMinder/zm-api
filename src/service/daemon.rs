@@ -117,6 +117,13 @@ pub async fn start_daemon(
     id: &str,
     args: &[String],
 ) -> AppResult<DaemonActionResponse> {
+    // Refuse a command that isn't one of ZoneMinder's daemons with 400, not a
+    // 200 that says it failed.
+    if let Err(reason) = crate::daemon::manager::check_daemon_spec(id, args) {
+        return Err(AppError::BadRequestError(format!(
+            "Invalid daemon spec: {reason}"
+        )));
+    }
     let Some(manager) = state.daemon_manager.as_ref() else {
         let spec = std::iter::once(id)
             .chain(args.iter().map(String::as_str))

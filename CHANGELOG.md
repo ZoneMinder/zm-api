@@ -259,6 +259,17 @@ recognisable path forward.
 
 ### Fixed
 
+- **`POST /events` works.** It never set `Events.StateId`, which is NOT NULL
+  with no default, so every create failed with 500. It now records the
+  active run state, or 0, as zmc does.
+- **PTZ commands reach zmcontrol.pl's socket where ZoneMinder puts it.** The
+  Perl bridge looked for `zmcontrol-{id}.sock` in `/run/zm` whatever
+  `ZM_PATH_SOCKS` said. ZoneMinder's RPM packages use `/run/zoneminder`,
+  where it missed the socket and ran zmcontrol.pl for every command.
+- **Starting a daemon zm-api won't run is 400.** `POST /daemons/{id}/start`
+  for a command that isn't one of ZoneMinder's daemons answered 200 with
+  `"success": false`. The daemon endpoints' 404 and 503 are now documented
+  with the error body they send.
 - **The OpenAPI document describes every response.** Each operation now has
   a `default` response with the standard error body (`AppResponseError`), so
   clients get a schema for 401, 403, 404 and 500 wherever they occur. The

@@ -56,8 +56,19 @@ impl PtzManager {
     /// Create a manager with the default registry: the native ONVIF factory
     /// registered, with the Perl bridge as fallback for all other protocols.
     pub fn with_defaults() -> Self {
-        #[allow(unused_mut)]
-        let mut registry = PtzRegistry::default();
+        Self::with_registry(PtzRegistry::default())
+    }
+
+    /// [`with_defaults`](Self::with_defaults), with the Perl bridge looking
+    /// for `zmcontrol-{id}.sock` in `socks_dir` (`ZM_PATH_SOCKS`) rather than
+    /// `/run/zm`. ZoneMinder's RPM packages use `/run/zoneminder`, where the
+    /// bridge otherwise missed the socket and ran zmcontrol.pl for every
+    /// command.
+    pub fn with_socket_dir(socks_dir: &str) -> Self {
+        Self::with_registry(PtzRegistry::with_socket_dir(socks_dir.to_string()))
+    }
+
+    fn with_registry(#[allow(unused_mut)] mut registry: PtzRegistry) -> Self {
         #[cfg(feature = "onvif-ptz")]
         registry.register_native(Arc::new(super::protocols::onvif::OnvifControlFactory::new()));
         Self::new(registry)

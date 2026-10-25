@@ -1876,10 +1876,24 @@
             }
           },
           "404": {
-            "description": "Daemon not found"
+            "description": "Daemon not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
           },
           "503": {
-            "description": "Daemon manager not available"
+            "description": "Daemon manager not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
           },
           "default": {
             "description": "Error",
@@ -1929,7 +1943,14 @@
             }
           },
           "503": {
-            "description": "Daemon manager not available"
+            "description": "Daemon manager not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
           },
           "default": {
             "description": "Error",
@@ -1979,7 +2000,14 @@
             }
           },
           "503": {
-            "description": "Daemon manager not available"
+            "description": "Daemon manager not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
           },
           "default": {
             "description": "Error",
@@ -2046,7 +2074,14 @@
             }
           },
           "503": {
-            "description": "Daemon manager not available"
+            "description": "Daemon manager not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
           },
           "default": {
             "description": "Error",
@@ -2096,7 +2131,14 @@
             }
           },
           "503": {
-            "description": "Daemon manager not available"
+            "description": "Daemon manager not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
           },
           "default": {
             "description": "Error",
@@ -19090,7 +19132,14 @@
             }
           },
           "503": {
-            "description": "Daemon manager not available"
+            "description": "Daemon manager not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
           },
           "default": {
             "description": "Error",
@@ -19216,7 +19265,14 @@
             }
           },
           "503": {
-            "description": "Daemon manager not available"
+            "description": "Daemon manager not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
           },
           "default": {
             "description": "Error",
@@ -19255,7 +19311,14 @@
             }
           },
           "503": {
-            "description": "Daemon manager not available"
+            "description": "Daemon manager not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
           },
           "default": {
             "description": "Error",
@@ -19294,7 +19357,14 @@
             }
           },
           "503": {
-            "description": "Daemon manager not available"
+            "description": "Daemon manager not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
           },
           "default": {
             "description": "Error",
@@ -19347,7 +19417,14 @@
             "description": "State not found"
           },
           "503": {
-            "description": "Daemon manager not available"
+            "description": "Daemon manager not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
           },
           "default": {
             "description": "Error",
@@ -19386,7 +19463,14 @@
             }
           },
           "503": {
-            "description": "Daemon manager not available"
+            "description": "Daemon manager not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
           },
           "default": {
             "description": "Error",
