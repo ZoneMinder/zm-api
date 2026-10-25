@@ -259,6 +259,17 @@ recognisable path forward.
 
 ### Fixed
 
+- **The OpenAPI document describes every response.** Each operation now has
+  a `default` response with the standard error body (`AppResponseError`), so
+  clients get a schema for 401, 403, 404 and 500 wherever they occur. The
+  motion synopsis endpoints (`/events/{id}/synopsis`, `/layout`, `/mp4`,
+  `/review` and `/events/synopsis`) were served but missing from the
+  document, and are now in it. `GET /host/getVersion` and
+  `POST /server/control/{action}` documented their errors as
+  `MessageResponse`, and `GET /daemons` its 503 with no body; they now say
+  `AppResponseError`, which is what they send. Integration tests check
+  every JSON response against the document (#237).
+
 - **The stream socket reader identifies codecs by name.** zmc's HELLO now
   carries FFmpeg's codec name (`hevc`, `aac`, tag `0x0B`, ZoneMinder#5336).
   zm-api uses it ahead of the numeric `AVCodecID`, which changes between

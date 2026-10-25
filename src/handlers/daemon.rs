@@ -20,7 +20,7 @@ use garde::Validate;
     path = "/api/v3/daemons",
     responses(
         (status = 200, description = "List of all daemons", body = DaemonListResponse),
-        (status = 503, description = "Daemon manager not available")
+        (status = 503, description = "Daemon manager not available", body = crate::error::AppResponseError)
     ),
     tag = "Daemons"
 )]

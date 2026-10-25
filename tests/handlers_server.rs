@@ -1,3 +1,5 @@
+mod common;
+
 use axum::{
     body::{self, Body},
     http::Request,
@@ -9,7 +11,7 @@ use tower::util::ServiceExt; // for `oneshot`
 async fn health_check_ok() {
     let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
     let response = app
         .oneshot(
             Request::get("/api/v3/server/health_check")
@@ -64,7 +66,7 @@ async fn get_version_returns_values() {
         .append_query_results::<ConfigModel, _, _>(vec![vec![v2]])
         .into_connection();
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
     let response = app
         .oneshot(
             Request::get("/api/v3/host/getVersion")

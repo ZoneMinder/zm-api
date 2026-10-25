@@ -105,6 +105,11 @@ use crate::util::claim::UserClaims;
 
         // event playback
         crate::handlers::events_playback::get_event_playlist,
+        crate::handlers::synopsis::get_event_synopsis_review,
+        crate::handlers::synopsis::get_event_synopsis_layout,
+        crate::handlers::synopsis::get_event_synopsis,
+        crate::handlers::synopsis::get_event_synopsis_mp4,
+        crate::handlers::synopsis::get_range_synopsis,
         crate::handlers::media_links::create_event_link,
         crate::handlers::events_playback::get_event_video,
         crate::handlers::events_playback::get_event_stream_video,
@@ -822,9 +827,48 @@ use crate::util::claim::UserClaims;
         (name = "Zone Presets", description = "Zone preset endpoints"),
         (name = "Zones", description = "Zone management endpoints"),
     ),
-    modifiers(&SecurityAddon)
+    modifiers(&SecurityAddon, &ErrorResponses)
 )]
 pub struct ApiDoc;
+
+/// Every operation answers any status it doesn't list with the standard error
+/// body, [`AppResponseError`]: that is what `AppError` renders, from the
+/// handler or from the auth and permission layers in front of it. A `default`
+/// response says so once instead of on each of the ~330 operations, and gives
+/// clients a schema for 401, 403, 404 and 500 wherever they can occur.
+struct ErrorResponses;
+
+impl Modify for ErrorResponses {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        use utoipa::openapi::{ContentBuilder, Ref, ResponseBuilder};
+        let error = ResponseBuilder::new()
+            .description("Error")
+            .content(
+                "application/json",
+                ContentBuilder::new()
+                    .schema(Some(Ref::from_schema_name("AppResponseError")))
+                    .build(),
+            )
+            .build();
+        for item in openapi.paths.paths.values_mut() {
+            for op in [
+                &mut item.get,
+                &mut item.put,
+                &mut item.post,
+                &mut item.delete,
+                &mut item.patch,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                op.responses
+                    .responses
+                    .entry("default".to_string())
+                    .or_insert_with(|| error.clone().into());
+            }
+        }
+    }
+}
 
 struct SecurityAddon;
 

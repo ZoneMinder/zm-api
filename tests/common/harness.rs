@@ -43,7 +43,7 @@ impl TestApp {
         let app_db = get_test_db().await.expect(expect_msg);
         let mut state = AppState::for_test_with_db(app_db);
         adjust(&mut state);
-        let router = zm_api::routes::create_router_app(state);
+        let router = super::schema::checked(zm_api::routes::create_router_app(state));
         Self {
             db: fixture_db,
             router,
@@ -67,7 +67,7 @@ impl TestApp {
         let app_db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
         let mut state = AppState::for_test_with_db(app_db);
         adjust(&mut state);
-        let router = zm_api::routes::create_router_app(state);
+        let router = super::schema::checked(zm_api::routes::create_router_app(state));
         Self {
             db: fixture_db,
             router,
@@ -81,7 +81,7 @@ impl TestApp {
     pub fn from_state(state: AppState) -> Self {
         use sea_orm::{DatabaseBackend, MockDatabase};
         let fixture_db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
-        let router = zm_api::routes::create_router_app(state);
+        let router = super::schema::checked(zm_api::routes::create_router_app(state));
         Self {
             db: fixture_db,
             router,
