@@ -37,8 +37,8 @@ use tokio::net::UnixStream;
 use tracing::{debug, info, warn};
 
 use super::media::{
-    extradata_to_annexb_nals, h264_nal_type, h265_nal_type, nal_is_keyframe, split_annexb_nals,
-    AdtsWrapper, AudioCodec, AudioPacket, VideoCodec, VideoPacket,
+    codec_from_extradata, extradata_to_annexb_nals, h264_nal_type, h265_nal_type, nal_is_keyframe,
+    split_annexb_nals, AdtsWrapper, AudioCodec, AudioPacket, VideoCodec, VideoPacket,
 };
 use super::protocol::{
     self, Header, MessageType, MonitorEvent, ProtocolError, StreamId, FLAG_KEYFRAME, HEADER_SIZE,
@@ -392,12 +392,26 @@ impl StreamSocketReader {
         let hello = protocol::parse_hello(payload)?;
         match stream_id {
             StreamId::Video => {
-                let codec = protocol::video_codec_from_id(hello.codec_id);
+                let mut codec = protocol::video_codec_from_id(hello.codec_id);
                 if codec == VideoCodec::Unknown {
-                    warn!(
-                        "Monitor {}: unsupported video codec id {} on stream socket",
-                        self.monitor_id, hello.codec_id
-                    );
+                    // The id is in zmc's FFmpeg numbering, which need not be
+                    // ours (#212); the parameter sets say what it is.
+                    codec = codec_from_extradata(&hello.extradata);
+                    if codec == VideoCodec::Unknown {
+                        warn!(
+                            "Monitor {}: unsupported video codec id {} on stream socket",
+                            self.monitor_id, hello.codec_id
+                        );
+                    } else {
+                        info!(
+                            "Monitor {}: codec id {} is not one this build's FFmpeg \
+                             knows; identified {} from its parameter sets (zmc links \
+                             a different FFmpeg version)",
+                            self.monitor_id,
+                            hello.codec_id,
+                            codec.as_str()
+                        );
+                    }
                 }
                 // A generation bump means the camera reconfigured — its pts
                 // clock may have restarted, so re-base both streams.
@@ -783,6 +797,57 @@ mod tests {
             })
             .collect();
         assert_eq!(timestamps, vec![0, 0, 0, 40_000]);
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #212: zmc linked against FFmpeg 7 sends HEVC as 173, which an FFmpeg 9
+    /// build numbers 172. An id this build does not know must not drop an
+    /// H.265 stream whose parameter sets say what it is.
+    #[tokio::test]
+    async fn unrecognised_codec_id_is_identified_from_parameter_sets() {
+        let dir = test_sock_dir("codec-sniff");
+        let sock = dir.join("stream_7.sock");
+
+        let vps: &[u8] = &[0, 0, 0, 1, 0x40, 0x01, 0x0C, 0x01];
+        let sps: &[u8] = &[0, 0, 0, 1, 0x42, 0x01, 0x01, 0x01];
+        let pps: &[u8] = &[0, 0, 0, 1, 0x44, 0x01, 0xC1, 0x72];
+        // IDR_W_RADL (type 19).
+        let idr: &[u8] = &[0, 0, 0, 1, 0x26, 0x01, 0xAF, 0x08];
+        let foreign_id = u32::MAX - 1;
+        assert_eq!(
+            protocol::video_codec_from_id(foreign_id),
+            VideoCodec::Unknown
+        );
+
+        let mut script = Vec::new();
+        script.extend_from_slice(&encode_message(
+            0x01,
+            0,
+            0,
+            0,
+            0,
+            0,
+            &hello_payload(foreign_id, &[vps, sps, pps].concat()),
+        ));
+        script.extend_from_slice(&encode_message(0x03, 0, FLAG_KEYFRAME, 1, 0, 1000, idr));
+
+        let server = spawn_fake_zmc(sock, script, false);
+        let mut reader = StreamSocketReader::new(7, test_config(&dir));
+        reader.connect().await.expect("connect");
+
+        // VideoParams, then VPS + SPS + PPS + IDR.
+        let events = collect_events(&mut reader, 5).await;
+        let SocketEvent::VideoParams { codec } = &events[0] else {
+            panic!("expected VideoParams first, got {:?}", events[0]);
+        };
+        assert_eq!(*codec, VideoCodec::H265);
+        let SocketEvent::Video(last) = &events[4] else {
+            panic!("expected the IDR, got {:?}", events[4]);
+        };
+        assert_eq!(h265_nal_type(&last.data), Some(19));
+        assert!(last.is_keyframe);
 
         server.abort();
         let _ = std::fs::remove_dir_all(&dir);
