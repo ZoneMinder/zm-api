@@ -103,7 +103,9 @@ pub struct PtzPresetRequest {
 /// Request for absolute positioning
 #[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema, Validate)]
 pub struct PtzAbsoluteRequest {
-    /// Pan position
+    /// Pan position. Through ZoneMinder's control daemon (a control with no
+    /// native implementation) absolute moves answer 400: no ZoneMinder
+    /// control module takes a position that way.
     #[garde(skip)]
     #[serde(default)]
     pub pan: Option<f64>,
@@ -122,17 +124,20 @@ pub struct PtzAbsoluteRequest {
 /// Request for relative movement
 #[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema, Validate)]
 pub struct PtzRelativeRequest {
-    /// Pan delta
+    /// Pan delta, positive right. Through ZoneMinder's control daemon it is a
+    /// whole step in the control's pan step range, sent as `moveRel<Dir>`
+    /// with `panstep`; with native ONVIF, a normalized translation.
     #[garde(skip)]
     #[serde(default)]
     pub pan_delta: Option<f64>,
 
-    /// Tilt delta
+    /// Tilt delta, positive up, in the same units as `pan_delta`.
     #[garde(skip)]
     #[serde(default)]
     pub tilt_delta: Option<f64>,
 
-    /// Zoom delta
+    /// Zoom delta, positive in (tele). Through ZoneMinder's control daemon,
+    /// `zoomRelTele` / `zoomRelWide` with `step`, sent after any pan or tilt.
     #[garde(skip)]
     #[serde(default)]
     pub zoom_delta: Option<f64>,

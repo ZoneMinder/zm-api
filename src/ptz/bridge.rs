@@ -19,8 +19,8 @@ use tracing::{debug, error, info, instrument, warn};
 use super::capabilities::PtzCapabilities;
 use super::error::{PtzError, PtzResult};
 use super::traits::{
-    AbsolutePosition, MoveParams, PtzCommand, PtzCommandResult, PtzConnectionConfig, PtzControl,
-    PtzControlFactory, ZoomParams,
+    MoveParams, PtzCommand, PtzCommandResult, PtzConnectionConfig, PtzControl, PtzControlFactory,
+    RelativePosition, ZoomParams,
 };
 
 /// Default path to zmcontrol.pl
@@ -34,6 +34,68 @@ const COMMAND_TIMEOUT_SECS: u64 = 30;
 
 /// Timeout for socket connection in milliseconds
 const SOCKET_CONNECT_TIMEOUT_MS: u64 = 1000;
+
+/// One method call for zmcontrol.pl: it calls `command` on the control
+/// module with `options` as its parameters.
+#[derive(Debug, Clone, PartialEq)]
+struct ZmCall {
+    command: &'static str,
+    options: Vec<(&'static str, i64)>,
+}
+
+/// A relative move as ZoneMinder's own web UI sends it (#248): the direction
+/// in the method name (`moveRelUp`, `moveRelDownLeft` …) and the size as a
+/// whole step in the control's units (`panstep`, `tiltstep`), given only for
+/// the axes that move. A zoom is `zoomRelTele` / `zoomRelWide` with `step`,
+/// sent after the move.
+///
+/// Positive pan is right and positive tilt is up, as in ONVIF. A delta that
+/// rounds to no step is no move; a request with no move at all is refused.
+fn relative_calls(pos: &RelativePosition) -> PtzResult<Vec<ZmCall>> {
+    let step = |delta: Option<f64>| {
+        let d = delta.unwrap_or(0.0).round();
+        (d != 0.0).then_some(d as i64)
+    };
+    let (pan, tilt, zoom) = (
+        step(pos.pan_delta),
+        step(pos.tilt_delta),
+        step(pos.zoom_delta),
+    );
+
+    let mut calls = Vec::new();
+    if pan.is_some() || tilt.is_some() {
+        let command = match (tilt.map(i64::signum), pan.map(i64::signum)) {
+            (Some(1), None) => "moveRelUp",
+            (Some(_), None) => "moveRelDown",
+            (None, Some(1)) => "moveRelRight",
+            (None, _) => "moveRelLeft",
+            (Some(1), Some(1)) => "moveRelUpRight",
+            (Some(1), Some(_)) => "moveRelUpLeft",
+            (Some(_), Some(1)) => "moveRelDownRight",
+            (Some(_), Some(_)) => "moveRelDownLeft",
+        };
+        let mut options = Vec::new();
+        if let Some(p) = pan {
+            options.push(("panstep", p.abs()));
+        }
+        if let Some(t) = tilt {
+            options.push(("tiltstep", t.abs()));
+        }
+        calls.push(ZmCall { command, options });
+    }
+    if let Some(z) = zoom {
+        calls.push(ZmCall {
+            command: if z > 0 { "zoomRelTele" } else { "zoomRelWide" },
+            options: vec![("step", z.abs())],
+        });
+    }
+    if calls.is_empty() {
+        return Err(PtzError::InvalidParameter(
+            "a relative move needs a pan, tilt or zoom delta of at least one step".to_string(),
+        ));
+    }
+    Ok(calls)
+}
 
 /// Perl-based PTZ control proxy that executes zmcontrol.pl
 ///
@@ -64,6 +126,41 @@ impl PerlControlProxy {
             zmcontrol_path: zmcontrol_path.unwrap_or_else(|| ZMCONTROL_PATH.to_string()),
             socket_path,
         }
+    }
+
+    /// [`ZmCall`] as the JSON zmcontrol.pl's socket reads.
+    fn call_json(&self, call: &ZmCall) -> serde_json::Value {
+        let mut options: HashMap<String, serde_json::Value> = HashMap::new();
+        options.insert("command".to_string(), json!(call.command));
+        for (name, value) in &call.options {
+            options.insert(name.to_string(), json!(value));
+        }
+        if self.autostop() {
+            options.insert("autostop".to_string(), json!(1));
+        }
+        json!(options)
+    }
+
+    /// [`ZmCall`] as zmcontrol.pl's command-line arguments.
+    fn call_args(&self, call: &ZmCall) -> Vec<String> {
+        let mut args = vec![
+            "--id".to_string(),
+            self.config.monitor_id.to_string(),
+            "--command".to_string(),
+            call.command.to_string(),
+        ];
+        for (name, value) in &call.options {
+            args.push(format!("--{name}"));
+            args.push(value.to_string());
+        }
+        if self.autostop() {
+            args.push("--autostop".to_string());
+        }
+        args
+    }
+
+    fn autostop(&self) -> bool {
+        self.config.auto_stop_timeout.is_some_and(|t| t > 0.0)
     }
 
     /// Build JSON options for socket communication
@@ -114,28 +211,6 @@ impl PerlControlProxy {
             PtzCommand::ClearPreset { preset_id } => {
                 options.insert("preset".to_string(), json!(preset_id));
             }
-            PtzCommand::MoveAbsolute(pos) => {
-                if let Some(pan) = pos.pan {
-                    options.insert("panpos".to_string(), json!(pan));
-                }
-                if let Some(tilt) = pos.tilt {
-                    options.insert("tiltpos".to_string(), json!(tilt));
-                }
-                if let Some(zoom) = pos.zoom {
-                    options.insert("zoompos".to_string(), json!(zoom));
-                }
-            }
-            PtzCommand::MoveRelative(pos) => {
-                if let Some(pan) = pos.pan_delta {
-                    options.insert("panstep".to_string(), json!(pan));
-                }
-                if let Some(tilt) = pos.tilt_delta {
-                    options.insert("tiltstep".to_string(), json!(tilt));
-                }
-                if let Some(zoom) = pos.zoom_delta {
-                    options.insert("zoomstep".to_string(), json!(zoom));
-                }
-            }
             PtzCommand::AudioPlay { file } => {
                 options.insert("file".to_string(), json!(file));
             }
@@ -158,9 +233,11 @@ impl PerlControlProxy {
     }
 
     /// Execute command via Unix socket (primary method)
-    #[instrument(skip(self), fields(monitor_id = self.config.monitor_id, socket = %self.socket_path.display()))]
-    async fn execute_via_socket(&self, command: &PtzCommand) -> PtzResult<PtzCommandResult> {
-        let json_options = self.build_json_options(command);
+    #[instrument(skip(self, json_options), fields(monitor_id = self.config.monitor_id, socket = %self.socket_path.display()))]
+    async fn execute_via_socket(
+        &self,
+        json_options: &serde_json::Value,
+    ) -> PtzResult<PtzCommandResult> {
         let json_string = json_options.to_string();
 
         debug!(json = %json_string, "Connecting to zmcontrol socket");
@@ -272,23 +349,6 @@ impl PerlControlProxy {
                 args.push("--preset".to_string());
                 args.push(preset_id.to_string());
             }
-            PtzCommand::MoveAbsolute(pos) => {
-                self.add_absolute_params(&mut args, pos);
-            }
-            PtzCommand::MoveRelative(pos) => {
-                if let Some(pan) = pos.pan_delta {
-                    args.push("--panstep".to_string());
-                    args.push(pan.to_string());
-                }
-                if let Some(tilt) = pos.tilt_delta {
-                    args.push("--tiltstep".to_string());
-                    args.push(tilt.to_string());
-                }
-                if let Some(zoom) = pos.zoom_delta {
-                    args.push("--zoomstep".to_string());
-                    args.push(zoom.to_string());
-                }
-            }
             PtzCommand::AudioPlay { file } => {
                 args.push("--file".to_string());
                 args.push(file.to_string());
@@ -321,21 +381,6 @@ impl PerlControlProxy {
         if let Some(speed) = params.speed {
             args.push("--speed".to_string());
             args.push(self.scale_zoom_speed(speed).to_string());
-        }
-    }
-
-    fn add_absolute_params(&self, args: &mut Vec<String>, pos: &AbsolutePosition) {
-        if let Some(pan) = pos.pan {
-            args.push("--panpos".to_string());
-            args.push(pan.to_string());
-        }
-        if let Some(tilt) = pos.tilt {
-            args.push("--tiltpos".to_string());
-            args.push(tilt.to_string());
-        }
-        if let Some(zoom) = pos.zoom {
-            args.push("--zoompos".to_string());
-            args.push(zoom.to_string());
         }
     }
 
@@ -460,8 +505,43 @@ impl PtzControl for PerlControlProxy {
 
     #[instrument(skip(self), fields(monitor_id = self.config.monitor_id, command = ?command))]
     async fn execute(&self, command: PtzCommand) -> PtzResult<PtzCommandResult> {
+        match &command {
+            // The one `moveAbs` in ZoneMinder (Amcrest_HTTP) reads positional
+            // arguments, and zmcontrol.pl passes a hash, so no module can
+            // take a position this way (#248).
+            PtzCommand::MoveAbsolute(_) => {
+                return Err(PtzError::CommandNotSupported(
+                    "absolute moves: ZoneMinder's control modules take no position from zmcontrol.pl"
+                        .to_string(),
+                ));
+            }
+            PtzCommand::MoveRelative(pos) => {
+                let mut result = None;
+                for call in relative_calls(pos)? {
+                    result = Some(
+                        self.send(self.call_json(&call), self.call_args(&call))
+                            .await?,
+                    );
+                }
+                return Ok(result.expect("relative_calls returns at least one call"));
+            }
+            _ => {}
+        }
+        self.send(self.build_json_options(&command), self.build_args(&command))
+            .await
+    }
+}
+
+impl PerlControlProxy {
+    /// Send one call to zmcontrol.pl: to its socket, or by running it when
+    /// the socket isn't there.
+    async fn send(
+        &self,
+        json_options: serde_json::Value,
+        args: Vec<String>,
+    ) -> PtzResult<PtzCommandResult> {
         // Try socket communication first (matches ZoneMinder PHP behavior)
-        match self.execute_via_socket(&command).await {
+        match self.execute_via_socket(&json_options).await {
             Ok(result) => {
                 info!(
                     monitor_id = self.config.monitor_id,
@@ -484,7 +564,6 @@ impl PtzControl for PerlControlProxy {
             method = "process",
             "Falling back to zmcontrol.pl process execution"
         );
-        let args = self.build_args(&command);
         self.execute_zmcontrol(args).await
     }
 }
@@ -646,6 +725,102 @@ mod tests {
 
         assert_eq!(json["command"], "presetGoto");
         assert_eq!(json["preset"], 5);
+    }
+
+    fn rel(pan: Option<f64>, tilt: Option<f64>, zoom: Option<f64>) -> RelativePosition {
+        RelativePosition {
+            pan_delta: pan,
+            tilt_delta: tilt,
+            zoom_delta: zoom,
+        }
+    }
+
+    fn commands(calls: &[ZmCall]) -> Vec<&str> {
+        calls.iter().map(|c| c.command).collect()
+    }
+
+    /// ZoneMinder's web UI sends `moveRel<Dir>` with whole steps, the
+    /// direction in the name (#248). Tilt is positive up, as in ONVIF.
+    #[test]
+    fn a_relative_move_is_moverel_with_the_direction_in_the_name() {
+        let calls = relative_calls(&rel(Some(5.0), Some(3.0), None)).unwrap();
+        assert_eq!(commands(&calls), ["moveRelUpRight"]);
+        assert_eq!(calls[0].options, [("panstep", 5), ("tiltstep", 3)]);
+
+        let calls = relative_calls(&rel(Some(-4.4), None, None)).unwrap();
+        assert_eq!(commands(&calls), ["moveRelLeft"]);
+        assert_eq!(calls[0].options, [("panstep", 4)]);
+
+        let calls = relative_calls(&rel(Some(0.0), Some(-2.0), None)).unwrap();
+        assert_eq!(commands(&calls), ["moveRelDown"]);
+        assert_eq!(calls[0].options, [("tiltstep", 2)]);
+
+        let calls = relative_calls(&rel(Some(-1.0), Some(-1.0), None)).unwrap();
+        assert_eq!(commands(&calls), ["moveRelDownLeft"]);
+    }
+
+    #[test]
+    fn a_relative_zoom_is_zoomrel_and_follows_the_move() {
+        let calls = relative_calls(&rel(None, None, Some(2.0))).unwrap();
+        assert_eq!(commands(&calls), ["zoomRelTele"]);
+        assert_eq!(calls[0].options, [("step", 2)]);
+
+        let calls = relative_calls(&rel(Some(1.0), None, Some(-3.0))).unwrap();
+        assert_eq!(commands(&calls), ["moveRelRight", "zoomRelWide"]);
+        assert_eq!(calls[1].options, [("step", 3)]);
+    }
+
+    #[test]
+    fn a_relative_move_of_nothing_is_refused() {
+        for pos in [rel(None, None, None), rel(Some(0.2), Some(-0.4), Some(0.0))] {
+            assert!(matches!(
+                relative_calls(&pos),
+                Err(PtzError::InvalidParameter(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn a_relative_call_reaches_zmcontrol_as_json_and_as_arguments() {
+        let proxy = PerlControlProxy::new(test_config(), test_capabilities(), None, None);
+        let call = &relative_calls(&rel(Some(5.0), Some(3.0), None)).unwrap()[0];
+
+        let json = proxy.call_json(call);
+        assert_eq!(json["command"], "moveRelUpRight");
+        assert_eq!(json["panstep"], 5);
+        assert_eq!(json["tiltstep"], 3);
+
+        let args = proxy.call_args(call);
+        let at = |flag: &str| args.iter().position(|a| a == flag).unwrap();
+        assert_eq!(args[at("--command") + 1], "moveRelUpRight");
+        assert_eq!(args[at("--panstep") + 1], "5");
+        assert_eq!(args[at("--tiltstep") + 1], "3");
+    }
+
+    /// No control module takes a position from zmcontrol.pl: the one
+    /// `moveAbs` there (Amcrest_HTTP) reads positional arguments, and
+    /// zmcontrol.pl passes a hash.
+    #[tokio::test]
+    async fn an_absolute_move_is_refused_before_anything_is_sent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proxy = PerlControlProxy::new(
+            test_config(),
+            test_capabilities(),
+            Some(tmp.path().join("no-zmcontrol").display().to_string()),
+            Some(tmp.path().display().to_string()),
+        );
+        let result = proxy
+            .execute(PtzCommand::MoveAbsolute(
+                crate::ptz::traits::AbsolutePosition {
+                    pan: Some(10.0),
+                    ..Default::default()
+                },
+            ))
+            .await;
+        assert!(
+            matches!(result, Err(PtzError::CommandNotSupported(_))),
+            "{result:?}"
+        );
     }
 
     #[test]

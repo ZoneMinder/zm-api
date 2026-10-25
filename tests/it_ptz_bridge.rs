@@ -5,8 +5,8 @@
 //! ZoneMinder's own web UI does. Here a stand-in listens on that socket and
 //! records what arrives, and every bridge-backed PTZ endpoint is called once.
 //! The camera address is in TEST-NET-1 (192.0.2.0/24), which nothing routes:
-//! only the stand-in is ever contacted. Absolute and relative moves are left
-//! out: zm-api sends them as commands no control module has (#248).
+//! only the stand-in is ever contacted. A relative move arrives as
+//! ZoneMinder's own `moveRel<Dir>`; an absolute one is refused (#248).
 //!
 //!   APP_PROFILE=test-db cargo test --test it_ptz_bridge -- --include-ignored
 
@@ -159,6 +159,45 @@ async fn every_bridge_command_reaches_zmcontrol() {
             assert_eq!(got["file"], 2, "{path}: {got}");
         }
     }
+
+    // A relative move and zoom: two calls, as ZoneMinder's web UI names them.
+    let before = received.lock().unwrap().len();
+    let r = app
+        .post_json(
+            &format!("{base}/relative"),
+            &token,
+            &json!({ "pan_delta": -5, "tilt_delta": 3, "zoom_delta": 2 }),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::OK, "relative: {}", r.text());
+    let mut got = Vec::new();
+    for _ in 0..50 {
+        got = received.lock().unwrap()[before..].to_vec();
+        if got.len() >= 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(got.len(), 2, "relative: {got:?}");
+    assert_eq!(got[0]["command"], "moveRelUpLeft", "{}", got[0]);
+    assert_eq!(got[0]["panstep"], 5, "{}", got[0]);
+    assert_eq!(got[0]["tiltstep"], 3, "{}", got[0]);
+    assert_eq!(got[1]["command"], "zoomRelTele", "{}", got[1]);
+    assert_eq!(got[1]["step"], 2, "{}", got[1]);
+
+    // No module takes a position from zmcontrol.pl, so nothing is sent.
+    let before = received.lock().unwrap().len();
+    let r = app
+        .post_json(&format!("{base}/absolute"), &token, &json!({ "pan": 10 }))
+        .await;
+    assert_eq!(
+        r.status(),
+        StatusCode::BAD_REQUEST,
+        "absolute: {}",
+        r.text()
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(received.lock().unwrap().len(), before);
 }
 
 #[tokio::test]
