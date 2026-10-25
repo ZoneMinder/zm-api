@@ -57,6 +57,11 @@ async fn app_with_manager(bin: &Path) -> TestApp {
             ..DaemonConfig::default()
         };
         let manager = DaemonManager::with_database(config, None, state.db.clone());
+        // The first system startup kills every process on the host named like
+        // a ZoneMinder daemon (`pkill -9`), orphans of a crashed zm-api. Spend
+        // that sweep here: on a machine running ZoneMinder it would kill the
+        // real daemons, and here it would kill other tests' stand-ins.
+        assert!(manager.orphan_sweep_due());
         state.daemon_manager = Some(Arc::new(manager));
     })
     .await

@@ -40,8 +40,8 @@ pub async fn list_daemons(State(state): State<AppState>) -> AppResult<Json<Daemo
     ),
     responses(
         (status = 200, description = "Daemon status", body = DaemonStatusResponse),
-        (status = 404, description = "Daemon not found"),
-        (status = 503, description = "Daemon manager not available")
+        (status = 404, description = "Daemon not found", body = crate::error::AppResponseError),
+        (status = 503, description = "Daemon manager not available", body = crate::error::AppResponseError)
     ),
     tag = "Daemons"
 )]
@@ -64,7 +64,7 @@ pub async fn get_daemon(
     request_body(content = Option<StartDaemonRequest>, description = "Optional arguments"),
     responses(
         (status = 200, description = "Daemon started", body = DaemonActionResponse),
-        (status = 503, description = "Daemon manager not available")
+        (status = 503, description = "Daemon manager not available", body = crate::error::AppResponseError)
     ),
     tag = "Daemons",
     security(("jwt" = []))
@@ -89,7 +89,7 @@ pub async fn start_daemon(
     ),
     responses(
         (status = 200, description = "Daemon stopped", body = DaemonActionResponse),
-        (status = 503, description = "Daemon manager not available")
+        (status = 503, description = "Daemon manager not available", body = crate::error::AppResponseError)
     ),
     tag = "Daemons",
     security(("jwt" = []))
@@ -112,7 +112,7 @@ pub async fn stop_daemon(
     ),
     responses(
         (status = 200, description = "Daemon restarted", body = DaemonActionResponse),
-        (status = 503, description = "Daemon manager not available")
+        (status = 503, description = "Daemon manager not available", body = crate::error::AppResponseError)
     ),
     tag = "Daemons",
     security(("jwt" = []))
@@ -135,7 +135,7 @@ pub async fn restart_daemon(
     ),
     responses(
         (status = 200, description = "Reload signal sent", body = DaemonActionResponse),
-        (status = 503, description = "Daemon manager not available")
+        (status = 503, description = "Daemon manager not available", body = crate::error::AppResponseError)
     ),
     tag = "Daemons",
     security(("jwt" = []))
@@ -156,7 +156,7 @@ pub async fn reload_daemon(
     path = "/api/v3/system/status",
     responses(
         (status = 200, description = "System status", body = SystemStatusResponse),
-        (status = 503, description = "Daemon manager not available")
+        (status = 503, description = "Daemon manager not available", body = crate::error::AppResponseError)
     ),
     tag = "System"
 )]
@@ -174,7 +174,7 @@ pub async fn get_system_status(
     path = "/api/v3/system/startup",
     responses(
         (status = 200, description = "System started", body = DaemonActionResponse),
-        (status = 503, description = "Daemon manager not available")
+        (status = 503, description = "Daemon manager not available", body = crate::error::AppResponseError)
     ),
     tag = "System",
     security(("jwt" = []))
@@ -193,7 +193,7 @@ pub async fn system_startup(
     path = "/api/v3/system/shutdown",
     responses(
         (status = 200, description = "System shutdown initiated", body = DaemonActionResponse),
-        (status = 503, description = "Daemon manager not available")
+        (status = 503, description = "Daemon manager not available", body = crate::error::AppResponseError)
     ),
     tag = "System",
     security(("jwt" = []))
@@ -212,7 +212,7 @@ pub async fn system_shutdown(
     path = "/api/v3/system/restart",
     responses(
         (status = 200, description = "System restarted", body = DaemonActionResponse),
-        (status = 503, description = "Daemon manager not available")
+        (status = 503, description = "Daemon manager not available", body = crate::error::AppResponseError)
     ),
     tag = "System",
     security(("jwt" = []))
@@ -231,7 +231,7 @@ pub async fn system_restart(
     path = "/api/v3/system/logrot",
     responses(
         (status = 200, description = "Log rotation triggered", body = DaemonActionResponse),
-        (status = 503, description = "Daemon manager not available")
+        (status = 503, description = "Daemon manager not available", body = crate::error::AppResponseError)
     ),
     tag = "System",
     security(("jwt" = []))
@@ -253,7 +253,7 @@ pub async fn system_logrot(State(state): State<AppState>) -> AppResult<Json<Daem
     responses(
         (status = 200, description = "State applied", body = DaemonActionResponse),
         (status = 404, description = "State not found"),
-        (status = 503, description = "Daemon manager not available")
+        (status = 503, description = "Daemon manager not available", body = crate::error::AppResponseError)
     ),
     tag = "System",
     security(("jwt" = []))

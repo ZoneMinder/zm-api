@@ -268,7 +268,8 @@ recognisable path forward.
   where it missed the socket and ran zmcontrol.pl for every command.
 - **Starting a daemon zm-api won't run is 400.** `POST /daemons/{id}/start`
   for a command that isn't one of ZoneMinder's daemons answered 200 with
-  `"success": false`.
+  `"success": false`. The daemon endpoints' 404 and 503 are now documented
+  with the error body they send.
 - **The OpenAPI document describes every response.** Each operation now has
   a `default` response with the standard error body (`AppResponseError`), so
   clients get a schema for 401, 403, 404 and 500 wherever they occur. The
