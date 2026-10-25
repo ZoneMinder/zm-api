@@ -37,9 +37,11 @@ pub struct ServerConfig {
 
 static PUBLIC_PREFIX: OnceLock<String> = OnceLock::new();
 
-/// Record `ServerConfig::public_prefix` once at startup.
-pub fn set_public_prefix(prefix: &str) {
-    let _ = PUBLIC_PREFIX.set(normalize_prefix(prefix));
+/// Record `ServerConfig::public_prefix` once at startup. Refuses a value
+/// that isn't a plain path, such as a full URL.
+pub fn set_public_prefix(prefix: &str) -> Result<(), String> {
+    let _ = PUBLIC_PREFIX.set(normalize_prefix(prefix)?);
+    Ok(())
 }
 
 /// The prefix in effect: empty, or `/`-led with no trailing `/`.
@@ -52,13 +54,26 @@ pub fn public_path(path: &str) -> String {
     format!("{}{path}", public_prefix())
 }
 
-fn normalize_prefix(prefix: &str) -> String {
+fn normalize_prefix(prefix: &str) -> Result<String, String> {
     let p = prefix.trim().trim_end_matches('/');
-    if p.is_empty() || p.starts_with('/') {
+    let p = if p.is_empty() || p.starts_with('/') {
         p.to_string()
     } else {
         format!("/{p}")
+    };
+    let plain_path = p
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "/-._~%".contains(c));
+    let segments_ok = p
+        .split('/')
+        .skip(1)
+        .all(|s| !s.is_empty() && s != "." && s != "..");
+    if !plain_path || !segments_ok {
+        return Err(format!(
+            "server.public_prefix must be a path such as /zm, not {prefix:?}"
+        ));
     }
+    Ok(p)
 }
 
 /// Accept either a comma-separated string or a sequence. TOML users write an
@@ -310,11 +325,28 @@ pub mod tests {
 
     #[test]
     fn public_prefix_is_normalized() {
-        assert_eq!(normalize_prefix(""), "");
-        assert_eq!(normalize_prefix("/"), "");
-        assert_eq!(normalize_prefix("/zm"), "/zm");
-        assert_eq!(normalize_prefix("/zm/"), "/zm");
-        assert_eq!(normalize_prefix(" zm "), "/zm");
+        assert_eq!(normalize_prefix("").unwrap(), "");
+        assert_eq!(normalize_prefix("/").unwrap(), "");
+        assert_eq!(normalize_prefix("/zm").unwrap(), "/zm");
+        assert_eq!(normalize_prefix("/zm/").unwrap(), "/zm");
+        assert_eq!(normalize_prefix(" zm ").unwrap(), "/zm");
+        assert_eq!(normalize_prefix("/cams/zm").unwrap(), "/cams/zm");
+    }
+
+    #[test]
+    fn public_prefix_must_be_a_plain_path() {
+        for bad in [
+            "https://host/zm",
+            "/zm?x=1",
+            "/zm#top",
+            "/z m",
+            "//zm",
+            "/zm//api",
+            "/zm/../etc",
+            "/zm\\x",
+        ] {
+            assert!(normalize_prefix(bad).is_err(), "{bad:?} should be refused");
+        }
     }
 
     #[test]
