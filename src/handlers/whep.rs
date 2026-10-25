@@ -78,7 +78,9 @@ pub async fn whep_offer(
             .header(header::CONTENT_TYPE, SDP)
             .header(
                 header::LOCATION,
-                format!("/api/v3/live/{monitor_id}/webrtc/whep/{id}"),
+                crate::configure::server::public_path(&format!(
+                    "/api/v3/live/{monitor_id}/webrtc/whep/{id}"
+                )),
             )
             .body(Body::from(answer))
             .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "response")),

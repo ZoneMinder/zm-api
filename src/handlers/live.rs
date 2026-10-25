@@ -183,7 +183,7 @@ pub async fn start_live_stream(
             _ => AppError::BadRequestError(format!("Failed to start live stream: {}", e)),
         })?;
 
-    let base_url = format!("/api/v3/live/{}", monitor_id);
+    let base_url = crate::configure::server::public_path(&format!("/api/v3/live/{}", monitor_id));
 
     Ok(Json(StartLiveResponse {
         monitor_id,

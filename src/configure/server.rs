@@ -1,5 +1,6 @@
 use std::net::{AddrParseError, SocketAddr};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use serde::Deserialize;
 
@@ -24,6 +25,40 @@ pub struct ServerConfig {
     /// HTTP middleware tuning (body limits, rate limiting).
     #[serde(default)]
     pub middleware: MiddlewareConfig,
+    /// Path the reverse proxy serves zm-api under, e.g. `/zm` when it maps
+    /// `/zm/api/v3/` to `/api/v3/` so the API sits with the rest of ZoneMinder.
+    /// Routes do not change; only URLs zm-api writes into responses get it:
+    /// stream and media links, the WHEP session `Location`, search results,
+    /// Swagger UI's document and the OpenAPI server. Empty (the default) means
+    /// the site root.
+    #[serde(default)]
+    pub public_prefix: String,
+}
+
+static PUBLIC_PREFIX: OnceLock<String> = OnceLock::new();
+
+/// Record `ServerConfig::public_prefix` once at startup.
+pub fn set_public_prefix(prefix: &str) {
+    let _ = PUBLIC_PREFIX.set(normalize_prefix(prefix));
+}
+
+/// The prefix in effect: empty, or `/`-led with no trailing `/`.
+pub fn public_prefix() -> &'static str {
+    PUBLIC_PREFIX.get().map(String::as_str).unwrap_or("")
+}
+
+/// `path`, as zm-api routes it, the way a client behind the proxy reaches it.
+pub fn public_path(path: &str) -> String {
+    format!("{}{path}", public_prefix())
+}
+
+fn normalize_prefix(prefix: &str) -> String {
+    let p = prefix.trim().trim_end_matches('/');
+    if p.is_empty() || p.starts_with('/') {
+        p.to_string()
+    } else {
+        format!("/{p}")
+    }
 }
 
 /// Accept either a comma-separated string or a sequence. TOML users write an
@@ -268,8 +303,18 @@ pub mod tests {
             acme: None,
             allowed_origins: Vec::new(),
             middleware: MiddlewareConfig::default(),
+            public_prefix: String::new(),
         };
         assert_eq!(config.get_http_addr(), "http://127.0.0.1:1024");
+    }
+
+    #[test]
+    fn public_prefix_is_normalized() {
+        assert_eq!(normalize_prefix(""), "");
+        assert_eq!(normalize_prefix("/"), "");
+        assert_eq!(normalize_prefix("/zm"), "/zm");
+        assert_eq!(normalize_prefix("/zm/"), "/zm");
+        assert_eq!(normalize_prefix(" zm "), "/zm");
     }
 
     #[test]

@@ -22,7 +22,7 @@ pub struct SearchCitation {
 
 impl From<Hit> for SearchCitation {
     fn from(h: Hit) -> Self {
-        let url = format!("/api/v3/events/{}", h.event_id);
+        let url = crate::configure::server::public_path(&format!("/api/v3/events/{}", h.event_id));
         Self {
             event_id: h.event_id,
             ts: h.ts,

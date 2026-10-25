@@ -16,6 +16,15 @@ port = 8080
 # Override per-host with: APP_SERVER__ALLOWED_ORIGINS=https://zm.example.com
 allowed_origins = []
 
+# Path a reverse proxy publishes zm-api under when it strips it before passing
+# requests on, e.g. "/zm" for /zm/api/v3 -> /api/v3. Routes do not change; only
+# URLs zm-api writes into responses get it: HLS playlists, media links, the
+# WHEP session Location, search results, Swagger UI's document and "try it out".
+# Empty means the site root.
+#
+# Override per-host with: APP_SERVER__PUBLIC_PREFIX=/zm
+public_prefix = ""
+
 # Serving the zm-web browser UI from this binary, instead of putting nginx in
 # front of both. One process, no CORS (the UI and the API share an origin by
 # construction), and TLS is already handled by [server.tls] / [server.acme].

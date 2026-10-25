@@ -81,7 +81,9 @@ pub async fn create_live_link(
         MediaResource::Monitor(monitor_id),
         claims.uid,
         &req,
-        format!("/api/v3/live/{monitor_id}/hls/master.m3u8"),
+        crate::configure::server::public_path(&format!(
+            "/api/v3/live/{monitor_id}/hls/master.m3u8"
+        )),
     )?))
 }
 
@@ -196,6 +198,8 @@ pub async fn create_event_link(
         },
         claims.uid,
         &req,
-        format!("/api/v3/events/{event_id}/stream/playlist.m3u8"),
+        crate::configure::server::public_path(&format!(
+            "/api/v3/events/{event_id}/stream/playlist.m3u8"
+        )),
     )?))
 }

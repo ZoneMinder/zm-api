@@ -617,10 +617,20 @@ pub fn create_router_app(state: AppState) -> Router {
     let mut openapi = ApiDoc::openapi();
     #[cfg(feature = "onvif-discovery")]
     openapi.merge(crate::handlers::discovery::DiscoveryApiDoc::openapi());
+    // Behind a proxy prefix, Swagger UI must fetch the document, and send
+    // "try it out" requests, through that prefix.
+    let prefix = crate::configure::server::public_prefix();
+    let mut swagger = SwaggerUi::new("/swagger-ui");
+    if !prefix.is_empty() {
+        openapi.servers = Some(vec![utoipa::openapi::Server::new(prefix)]);
+        swagger = swagger.config(utoipa_swagger_ui::Config::from(format!(
+            "{prefix}/api-docs/openapi.json"
+        )));
+    }
 
     // Regular JSON API endpoints — safe to gzip/brotli compress.
     let api = Router::new()
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi))
+        .merge(swagger.url("/api-docs/openapi.json", openapi))
         .merge(server_routes)
         .merge(auth_routes)
         .merge(monitors_routes)
