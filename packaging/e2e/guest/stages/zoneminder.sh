@@ -49,6 +49,7 @@ esac
 version="$(db "SELECT Value FROM Config WHERE Name='ZM_DYN_DB_VERSION'")"
 note "ZoneMinder schema version: ${version}"
 echo "$version" >"$ARTIFACTS/zoneminder-version"
+check "zmuser can't log in over TCP (skip-name-resolve)" tcp_login_refused
 check_eq "ZoneMinder's daemons run as" "$E2E_WEB_USER" "$(zm_conf ZM_WEB_USER)"
 
 section "Synthetic camera"
@@ -69,6 +70,13 @@ ffmpeg -hide_banner -loglevel error \
   -f lavfi -i "sine=frequency=440:sample_rate=16000" -t 20 \
   -c:v libx264 -profile:v baseline -pix_fmt yuv420p -g 20 -bf 0 -b:v 300k \
   -c:a aac -b:a 32k -y clip.mp4
+# The same picture in H.265, which many cameras send and which needs its own
+# path through zm-api (#212). passive.sh switches the monitor to it.
+ffmpeg -hide_banner -loglevel error \
+  -f lavfi -i "testsrc2=size=640x360:rate=10" \
+  -f lavfi -i "sine=frequency=440:sample_rate=16000" -t 20 \
+  -c:v libx265 -preset ultrafast -pix_fmt yuv420p -x265-params "keyint=20:bframes=0:log-level=error" \
+  -tag:v hvc1 -b:v 300k -c:a aac -b:a 32k -y clip265.mp4
 cat >mediamtx.yml <<YAML
 logLevel: warn
 rtmp: no
@@ -78,6 +86,9 @@ srt: no
 paths:
   cam:
     runOnInit: ffmpeg -hide_banner -loglevel error -re -stream_loop -1 -i /opt/e2e-camera/clip.mp4 -c copy -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam
+    runOnInitRestart: yes
+  cam265:
+    runOnInit: ffmpeg -hide_banner -loglevel error -re -stream_loop -1 -i /opt/e2e-camera/clip265.mp4 -c copy -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam265
     runOnInitRestart: yes
 YAML
 cat >/etc/systemd/system/e2e-camera.service <<UNIT
@@ -93,6 +104,8 @@ systemctl daemon-reload
 systemctl enable --now e2e-camera.service
 check "camera is streaming" wait_until 30 \
   ffprobe -loglevel error -rtsp_transport tcp rtsp://127.0.0.1:8554/cam
+check "H.265 camera is streaming" wait_until 30 \
+  ffprobe -loglevel error -rtsp_transport tcp rtsp://127.0.0.1:8554/cam265
 
 section "Monitor"
 # Continuous recording with video passthrough: every section is an event, so
