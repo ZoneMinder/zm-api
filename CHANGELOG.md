@@ -269,6 +269,10 @@ recognisable path forward.
 - **Starting a daemon zm-api won't run is 400.** `POST /daemons/{id}/start`
   for a command that isn't one of ZoneMinder's daemons answered 200 with
   `"success": false`.
+- **HTTP/2 with Let's Encrypt (ACME).** In ACME mode the TLS config came
+  from rustls-acme's default, which advertises no ALPN protocol, so browsers
+  spoke HTTP/1.1 and its six connections per host held back HLS grids. It
+  now offers `h2` and `http/1.1`, as certificate-file mode already did.
 
 - **`localhost` reaches MariaDB through its socket on openSUSE too.** zm-api
   connects to `localhost` through the standard socket, as libmysqlclient does
