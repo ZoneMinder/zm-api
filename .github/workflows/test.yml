@@ -84,11 +84,17 @@ jobs:
           path: ~/.cargo/git
           key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
 
+      # Build caches hold objects compiled against this runner's FFmpeg. When
+      # GitHub moves ubuntu-latest to a new release, an old cache links against
+      # the new libraries and fails on removed functions, so key on the version.
+      - name: Key the build cache to this FFmpeg
+        run: echo "FFMPEG_KEY=$(. /etc/os-release; echo "$ID-$VERSION_ID")-avcodec-$(pkg-config --modversion libavcodec)" >> "$GITHUB_ENV"
+
       - name: Cache cargo build
         uses: actions/cache@v5
         with:
           path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ env.FFMPEG_KEY }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Setup test databases
         run: |
@@ -296,7 +302,16 @@ jobs:
             libavdevice-dev libavcodec-dev libswscale-dev libswresample-dev
 
       - uses: dtolnay/rust-toolchain@stable
+
+      # Build caches hold objects compiled against this runner's FFmpeg. When
+      # GitHub moves ubuntu-latest to a new release, an old cache links against
+      # the new libraries and fails on removed functions, so key on the version.
+      - name: Key the build cache to this FFmpeg
+        run: echo "FFMPEG_KEY=$(. /etc/os-release; echo "$ID-$VERSION_ID")-avcodec-$(pkg-config --modversion libavcodec)" >> "$GITHUB_ENV"
+
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ env.FFMPEG_KEY }}
 
       # `--openapi` needs no database and no configuration.
       - name: Export the current spec
@@ -352,11 +367,17 @@ jobs:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
+      # Build caches hold objects compiled against this runner's FFmpeg. When
+      # GitHub moves ubuntu-latest to a new release, an old cache links against
+      # the new libraries and fails on removed functions, so key on the version.
+      - name: Key the build cache to this FFmpeg
+        run: echo "FFMPEG_KEY=$(. /etc/os-release; echo "$ID-$VERSION_ID")-avcodec-$(pkg-config --modversion libavcodec)" >> "$GITHUB_ENV"
+
       - name: Cache cargo build
         uses: actions/cache@v5
         with:
           path: target
-          key: ${{ runner.os }}-cargo-parity-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ env.FFMPEG_KEY }}-cargo-parity-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Verify generated migrations are in sync with their generators
         run: |
@@ -425,11 +446,17 @@ jobs:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
+      # Build caches hold objects compiled against this runner's FFmpeg. When
+      # GitHub moves ubuntu-latest to a new release, an old cache links against
+      # the new libraries and fails on removed functions, so key on the version.
+      - name: Key the build cache to this FFmpeg
+        run: echo "FFMPEG_KEY=$(. /etc/os-release; echo "$ID-$VERSION_ID")-avcodec-$(pkg-config --modversion libavcodec)" >> "$GITHUB_ENV"
+
       - name: Cache cargo build
         uses: actions/cache@v5
         with:
           path: target
-          key: ${{ runner.os }}-cargo-parity-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ env.FFMPEG_KEY }}-cargo-parity-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run Postgres schema check
         env:
@@ -484,11 +511,17 @@ jobs:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
+      # Build caches hold objects compiled against this runner's FFmpeg. When
+      # GitHub moves ubuntu-latest to a new release, an old cache links against
+      # the new libraries and fails on removed functions, so key on the version.
+      - name: Key the build cache to this FFmpeg
+        run: echo "FFMPEG_KEY=$(. /etc/os-release; echo "$ID-$VERSION_ID")-avcodec-$(pkg-config --modversion libavcodec)" >> "$GITHUB_ENV"
+
       - name: Cache cargo build
         uses: actions/cache@v5
         with:
           path: target
-          key: ${{ runner.os }}-cargo-parity-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ env.FFMPEG_KEY }}-cargo-parity-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run upgrade parity from ${{ matrix.zm_version }}
         env:
