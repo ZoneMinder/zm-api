@@ -20,19 +20,23 @@ use serde_json::{json, Value};
 use zm_api::daemon::{DaemonConfig, DaemonManager};
 
 /// A `zmc` that logs `start <args>`, `hup` and `winch`, and exits on SIGTERM.
-/// The traps go first: a signal sent once `start` is logged must find them.
+/// Perl, not sh: CI starts tests with SIGHUP ignored, and a POSIX shell can't
+/// trap a signal it inherited ignored, while a real daemon (and Perl) sets
+/// its own handler.
 fn fake_zmc(dir: &Path) -> PathBuf {
     let log = dir.join("zmc.log");
     let script = dir.join("zmc");
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\n\
-             trap 'echo hup >> \"{log}\"' HUP\n\
-             trap 'echo winch >> \"{log}\"' WINCH\n\
-             trap 'exit 0' TERM\n\
-             echo \"start $*\" >> '{log}'\n\
-             while true; do sleep 1 & wait $!; done\n",
+            "#!/usr/bin/env perl\n\
+             my $log = '{log}';\n\
+             sub note {{ open(my $f, '>>', $log) or die; print $f \"$_[0]\\n\"; close $f }}\n\
+             $SIG{{HUP}} = sub {{ note('hup') }};\n\
+             $SIG{{WINCH}} = sub {{ note('winch') }};\n\
+             $SIG{{TERM}} = sub {{ exit 0 }};\n\
+             note(\"start @ARGV\");\n\
+             sleep 1 while 1;\n",
             log = log.display()
         ),
     )
