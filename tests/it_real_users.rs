@@ -226,6 +226,109 @@ async fn a_view_row_stops_an_edit_user_changing_that_monitor() {
     assert_eq!(r.status(), StatusCode::FORBIDDEN, "{}", r.text());
 }
 
+/// ZoneMinder's `canEdit('Monitors', $mid)` is the monitor's row alone: an
+/// Edit row lets a View user change that one camera (#244).
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn an_edit_row_lets_a_view_user_change_that_monitor() {
+    let app = TestApp::spawn().await;
+    let s = site(&app).await;
+    let user = UserSpec::new(json!({ "monitors": "View" }))
+        .monitor(s.a, "Edit")
+        .login(&app)
+        .await;
+    let t = &user.token;
+    let rename = json!({ "name": unique_name("Renamed") });
+
+    let r = app
+        .patch_json(&format!("/api/v3/monitors/{}", s.a), t, &rename)
+        .await;
+    assert_eq!(r.status(), StatusCode::OK, "{}", r.text());
+    // B has no row, so the base level (View) decides.
+    let r = app
+        .patch_json(&format!("/api/v3/monitors/{}", s.b), t, &rename)
+        .await;
+    assert_eq!(r.status(), StatusCode::FORBIDDEN, "{}", r.text());
+
+    // Zones are the monitor's: made under its path, changed by their own id.
+    let zone = json!({
+        "name": "Door", "type": "Active", "units": "Percent",
+        "coords": "0,0 50,0 50,50 0,50"
+    });
+    let r = app
+        .post_json(&format!("/api/v3/monitors/{}/zones", s.a), t, &zone)
+        .await;
+    assert_eq!(r.status(), StatusCode::CREATED, "{}", r.text());
+    let zid = r.json::<Value>()["id"].as_u64().expect("zone id");
+    let _zone = RowGuard::new(format!("Zones#{zid}"), move |db| async move {
+        use sea_orm::EntityTrait;
+        let _ = zm_api::entity::zones::Entity::delete_by_id(zid as u32)
+            .exec(&db)
+            .await;
+    });
+    let r = app
+        .request(axum::http::Method::PUT, &format!("/api/v3/zones/{zid}"))
+        .bearer(t)
+        .json(&json!({ "name": "Front door" }))
+        .send()
+        .await;
+    assert_eq!(r.status(), StatusCode::OK, "{}", r.text());
+    let r = app
+        .post_json(&format!("/api/v3/monitors/{}/zones", s.b), t, &zone)
+        .await;
+    assert_eq!(r.status(), StatusCode::FORBIDDEN, "{}", r.text());
+
+    // Deleting one needs base Edit as well, as ZoneMinder's console does.
+    let r = app.delete(&format!("/api/v3/monitors/{}", s.a), t).await;
+    assert_eq!(r.status(), StatusCode::FORBIDDEN, "{}", r.text());
+
+    // Adding a monitor is not about one monitor: the base level still rules.
+    let r = app
+        .post_json(
+            "/api/v3/monitors",
+            t,
+            &json!({ "name": unique_name("New") }),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::FORBIDDEN, "{}", r.text());
+}
+
+/// `canView('Monitors', $mid)` is likewise the row alone: a user whose base
+/// level is None can open the one monitor a View row grants, but not the
+/// monitor list, which the base level decides.
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn a_view_row_lets_a_user_without_monitors_open_that_monitor() {
+    let app = TestApp::spawn().await;
+    let s = site(&app).await;
+    let user = UserSpec::new(json!({ "monitors": "None" }))
+        .monitor(s.a, "View")
+        .login(&app)
+        .await;
+    let t = &user.token;
+
+    assert_eq!(
+        status(&app, t, &format!("/api/v3/monitors/{}", s.a)).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        status(&app, t, &format!("/api/v3/monitors/{}", s.b)).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        status(&app, t, "/api/v3/monitors").await,
+        StatusCode::FORBIDDEN
+    );
+    let r = app
+        .patch_json(
+            &format!("/api/v3/monitors/{}", s.a),
+            t,
+            &json!({ "name": unique_name("Renamed") }),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::FORBIDDEN, "{}", r.text());
+}
+
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn a_second_user_with_the_same_name_is_a_conflict() {

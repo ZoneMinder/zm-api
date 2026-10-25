@@ -194,6 +194,7 @@ pub async fn update_monitor(
     responses(
         (status = 200, description = "Monitor deleted successfully"),
         (status = 401, description = "Unauthorized - Invalid or missing token", body = AppResponseError),
+        (status = 403, description = "Needs Monitors Edit, and Edit on this monitor", body = AppResponseError),
         (status = 404, description = "Monitor not found", body = AppResponseError),
         (status = 500, description = "Internal server error", body = AppResponseError)
     ),
@@ -205,8 +206,16 @@ pub async fn update_monitor(
 pub async fn delete_monitor(
     State(state): State<AppState>,
     Path(id): Path<u32>,
+    claims: UserClaims,
     scope: MonitorScope,
 ) -> AppResult<Json<()>> {
+    // An Edit row on the monitor is not enough to remove it: ZoneMinder's
+    // console also wants `canEdit('Monitors')`, the base level (#244).
+    if claims.perms.monitors < crate::util::authz::Level::Edit {
+        return Err(AppError::PermissionDeniedError(
+            "Edit access to Monitors required".to_string(),
+        ));
+    }
     info!("Deleting monitor with ID: {id}.");
     match service::monitor::delete(&state, id, &scope).await {
         Ok(_) => Ok(Json(())),

@@ -226,11 +226,11 @@ pub async fn start_live_stream(
 pub async fn stop_live_stream(
     State(state): State<AppState>,
     Path(monitor_id): Path<u32>,
-    axum::Extension(claims): axum::Extension<crate::util::claim::UserClaims>,
     scope: crate::service::monitor_acl::MonitorScope,
 ) -> AppResult<StatusCode> {
     use crate::util::authz::Level;
-    if claims.perms.monitors < Level::Edit || !scope.allows(monitor_id, Level::Edit) {
+    // The monitor's row decides, as `canEdit('Monitors', $mid)` does (#244).
+    if !scope.allows(monitor_id, Level::Edit) {
         return Err(AppError::PermissionDeniedError(
             "Monitors Edit on this monitor required to stop its live stream".to_string(),
         ));
