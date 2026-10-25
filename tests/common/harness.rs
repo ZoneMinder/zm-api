@@ -50,6 +50,25 @@ impl TestApp {
         }
     }
 
+    /// [`spawn`](Self::spawn) with live view on, as `AppState::new` sets it up,
+    /// reading stream sockets from `socks_dir` (a
+    /// [`FakeZmc`](super::fake_zmc::FakeZmc)'s).
+    pub async fn spawn_live(socks_dir: &std::path::Path) -> Self {
+        let socks = socks_dir.to_string_lossy().into_owned();
+        Self::spawn_with(|state| {
+            let mut config = (*state.config).clone();
+            config.streaming.enabled = true;
+            config.streaming.hls.enabled = true;
+            config.streaming.hls.storage.path = format!("{socks}/hls");
+            // Host candidates only: no public STUN server in tests.
+            config.streaming.webrtc.stun_servers = Vec::new();
+            config.streaming.zoneminder.socks_path = socks;
+            state.config = std::sync::Arc::new(config);
+            state.enable_live_streaming();
+        })
+        .await
+    }
+
     /// Build the production router backed by an in-memory mock database.
     ///
     /// Suitable for tests that are rejected before any query runs — auth
@@ -105,6 +124,7 @@ impl TestApp {
             token: None,
             raw_auth_value: false,
             body: None,
+            headers: Vec::new(),
         }
     }
 
@@ -163,6 +183,7 @@ pub struct TestRequest {
     token: Option<String>,
     raw_auth_value: bool,
     body: Option<(Vec<u8>, &'static str)>,
+    headers: Vec<(String, String)>,
 }
 
 impl TestRequest {
@@ -178,6 +199,12 @@ impl TestRequest {
     pub fn raw_auth(mut self, value: &str) -> Self {
         self.token = Some(value.to_string());
         self.raw_auth_value = true;
+        self
+    }
+
+    /// Add a request header (`Range`, say).
+    pub fn header(mut self, name: &str, value: &str) -> Self {
+        self.headers.push((name.to_string(), value.to_string()));
         self
     }
 
@@ -206,6 +233,9 @@ impl TestRequest {
             };
             builder = builder.header(header::AUTHORIZATION, value);
         }
+        for (name, value) in &self.headers {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
         // Production serves with `into_make_service_with_connect_info`, so every
         // real request carries a `ConnectInfo<SocketAddr>`. The rate-limit layer
         // on the auth routes reads it (peer-IP keying), so inject a default here
@@ -227,11 +257,13 @@ impl TestRequest {
             .await
             .expect("router response");
         let status = response.status();
+        let headers = response.headers().clone();
         let bytes = body::to_bytes(response.into_body(), 16 * 1024 * 1024)
             .await
             .expect("read response body");
         TestResponse {
             status,
+            headers,
             body: bytes.to_vec(),
         }
     }
@@ -240,6 +272,7 @@ impl TestRequest {
 /// A collected response: status code plus raw body bytes.
 pub struct TestResponse {
     pub status: StatusCode,
+    pub headers: axum::http::HeaderMap,
     pub body: Vec<u8>,
 }
 
