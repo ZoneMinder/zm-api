@@ -223,9 +223,22 @@ pub async fn create(
             resource_type: ResourceType::Monitor,
         }));
     }
+    // `Events.StateId` is NOT NULL with no default. zmc records the run
+    // state in effect when the event opened, or 0 with none active
+    // (zm_event.cpp); without it every create failed.
+    let state_id = {
+        use crate::entity::states;
+        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+        states::Entity::find()
+            .filter(states::Column::IsActive.eq(1))
+            .one(state.db())
+            .await?
+            .map_or(0, |s| s.id)
+    };
     // Convert EventCreateRequest to ActiveModel for database insertion
     let active_event = events::ActiveModel {
         monitor_id: Set(event.monitor_id),
+        state_id: Set(state_id),
         storage_id: Set(Some(event.storage_id)),
         secondary_storage_id: Set(event.secondary_storage_id),
         name: Set(event.name),
@@ -491,8 +504,10 @@ mod tests {
         use crate::dto::request::events::{EventCreateRequest, EventUpdateRequest};
         use crate::dto::wrappers::DecimalWrapper;
         use crate::entity::sea_orm_active_enums::Orientation;
-        // Create: insert exec result is enough for MockDatabase
+        // Create: no active run state (StateId 0), then the insert.
+        let no_state: Vec<crate::entity::states::Model> = vec![];
         let db_create = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results(vec![no_state])
             .append_exec_results(vec![MockExecResult {
                 last_insert_id: 100,
                 rows_affected: 1,

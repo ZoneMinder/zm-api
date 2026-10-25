@@ -3149,6 +3149,13 @@ fn extra_args_from_id(id: &str, full_args: &[String]) -> Vec<String> {
 }
 
 /// Parse a daemon command string into command and args.
+/// Whether `id` and `args` name a daemon zm-api will run, as `start_daemon`
+/// decides it. For callers that answer before reaching the manager.
+pub(crate) fn check_daemon_spec(id: &str, args: &[String]) -> Result<(), String> {
+    let (command, daemon_args) = parse_daemon_command(id, args);
+    validate_daemon_spec(&command, &daemon_args)
+}
+
 fn parse_daemon_command(id: &str, extra_args: &[String]) -> (String, Vec<String>) {
     let parts: Vec<&str> = id.split_whitespace().collect();
     if parts.is_empty() {

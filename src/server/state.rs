@@ -326,7 +326,9 @@ impl AppState {
         };
 
         // Initialize PTZ manager
-        let ptz_manager = Arc::new(PtzManager::with_defaults());
+        let ptz_manager = Arc::new(PtzManager::with_socket_dir(
+            &config.streaming.zoneminder.socks_path,
+        ));
         tracing::info!("PTZ manager initialized");
 
         // Hydrate the in-memory token-revocation floors from
@@ -388,6 +390,9 @@ impl AppState {
         let search_service = Some(std::sync::Arc::new(SearchService::disabled(
             config.search.clone(),
         )));
+        let ptz_manager = std::sync::Arc::new(PtzManager::with_socket_dir(
+            &config.streaming.zoneminder.socks_path,
+        ));
         Self {
             config: std::sync::Arc::new(config),
             db,
@@ -399,7 +404,7 @@ impl AppState {
             synopsis_service,
             search_service,
             daemon_manager: None,
-            ptz_manager: std::sync::Arc::new(PtzManager::with_defaults()),
+            ptz_manager,
             revocations: std::sync::Arc::new(crate::util::revocation::TokenRevocations::default()),
             schema_behind: None,
             media_job_wake: std::sync::Arc::new(tokio::sync::Notify::new()),
