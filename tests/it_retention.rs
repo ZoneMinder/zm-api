@@ -14,7 +14,6 @@ mod common;
 use std::sync::Arc;
 
 use common::fixtures::{insert_monitor, insert_storage, unique_name, RowGuard};
-use common::test_db::get_test_db;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use zm_api::configure::retention::RetentionConfig;
 use zm_api::entity::sea_orm_active_enums::Scheme;
@@ -85,9 +84,9 @@ fn quota_config(max_bytes: u64, dry_run: bool) -> RetentionConfig {
     }
 }
 
-async fn service(config: RetentionConfig) -> RetentionService {
+async fn service(config: RetentionConfig, iso: &common::isolated::IsolatedDb) -> RetentionService {
     // The service owns its own connection; fixtures/assertions use another.
-    let db = Arc::new(get_test_db().await.expect("service db connection"));
+    let db = Arc::new(iso.connect().await);
     RetentionService::new(db, config)
 }
 
@@ -115,7 +114,9 @@ async fn dedicated_storage(
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn reap_deletes_oldest_over_quota_and_protects_newest() {
-    let db = get_test_db().await.expect("db");
+    // Maintenance and retention passes act on the whole database.
+    let iso = common::isolated::IsolatedDb::create().await;
+    let db = iso.connect().await;
     let tmp = tempfile::tempdir().unwrap();
 
     let monitor = insert_monitor(&db, "ReapMon").await.expect("monitor");
@@ -164,7 +165,7 @@ async fn reap_deletes_oldest_over_quota_and_protects_newest() {
 
     // Quota 150 MiB: delete e1 (300->200), delete e2 (200->100 <= 150 stop);
     // e3 is the newest per monitor and is always protected.
-    let deleted = service(quota_config(150 * MIB, false))
+    let deleted = service(quota_config(150 * MIB, false), &iso)
         .await
         .reap_storage_once(&storage, false)
         .await
@@ -188,7 +189,9 @@ async fn reap_deletes_oldest_over_quota_and_protects_newest() {
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn reap_never_touches_archived_or_in_progress_events() {
-    let db = get_test_db().await.expect("db");
+    // Maintenance and retention passes act on the whole database.
+    let iso = common::isolated::IsolatedDb::create().await;
+    let db = iso.connect().await;
     let tmp = tempfile::tempdir().unwrap();
 
     let monitor = insert_monitor(&db, "ReapSafeMon").await.expect("monitor");
@@ -257,7 +260,7 @@ async fn reap_never_touches_archived_or_in_progress_events() {
     // in-progress included — #110) against a 150 MiB quota: normal_old is
     // deleted; newest is protected and the other two are immune, so the pass
     // ends with the quota still exceeded rather than touching them.
-    let deleted = service(quota_config(150 * MIB, false))
+    let deleted = service(quota_config(150 * MIB, false), &iso)
         .await
         .reap_storage_once(&storage, false)
         .await
@@ -282,7 +285,9 @@ async fn reap_never_touches_archived_or_in_progress_events() {
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn reap_dry_run_reports_but_deletes_nothing() {
-    let db = get_test_db().await.expect("db");
+    // Maintenance and retention passes act on the whole database.
+    let iso = common::isolated::IsolatedDb::create().await;
+    let db = iso.connect().await;
     let tmp = tempfile::tempdir().unwrap();
 
     let monitor = insert_monitor(&db, "ReapDryMon").await.expect("monitor");
@@ -328,7 +333,7 @@ async fn reap_dry_run_reports_but_deletes_nothing() {
 
     // dry_run: the plan reports the same two would-be deletions, but nothing is
     // actually removed.
-    let would_delete = service(quota_config(150 * MIB, true))
+    let would_delete = service(quota_config(150 * MIB, true), &iso)
         .await
         .reap_storage_once(&storage, false)
         .await
