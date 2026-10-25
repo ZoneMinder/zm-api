@@ -13,15 +13,13 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde_json::json;
 use zm_api::entity::sea_orm_active_enums::Scheme;
 
-/// `run_pending` runs every queued job, so tests that queue and run jobs
-/// take turns: otherwise one runs the other's job.
-static QUEUE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn a_jpeg_event_gets_a_generated_video() {
-    let _queue = QUEUE.lock().await;
-    let app = TestApp::spawn().await;
+    // `run_pending` runs every queued job: a database of its own keeps it
+    // from running another test's.
+    let iso = common::isolated::IsolatedDb::create().await;
+    let app = TestApp::spawn_on(&iso).await;
     // media_jobs is zm-api's own table, created by its migrations.
     common::test_db::migrate_test_db(&app.db).await;
     let token = superuser_token();
@@ -144,8 +142,10 @@ async fn a_jpeg_event_gets_a_generated_video() {
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn a_generated_video_never_replaces_the_recording() {
-    let _queue = QUEUE.lock().await;
-    let app = TestApp::spawn().await;
+    // `run_pending` runs every queued job: a database of its own keeps it
+    // from running another test's.
+    let iso = common::isolated::IsolatedDb::create().await;
+    let app = TestApp::spawn_on(&iso).await;
     common::test_db::migrate_test_db(&app.db).await;
     let token = superuser_token();
     let tmp = tempfile::tempdir().unwrap();

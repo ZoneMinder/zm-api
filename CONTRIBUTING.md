@@ -57,6 +57,12 @@ zm-api works tests-first. Before opening a PR:
    APP_PROFILE=test-db cargo test --test '*' -- --include-ignored
    ```
 
+   Tests that act on the whole database (the media job runner, maintenance and retention
+   passes) use `common::isolated::IsolatedDb`, a database of their own, when
+   `TEST_DATABASE_ADMIN_URL` names a server account that can create databases
+   (`mysql://root:<password>@127.0.0.1:3307`). Without it they share the test database and
+   take turns. Use it for any new test that sweeps or counts rows it didn't make.
+
 CI enforces the same gates plus a line-coverage floor — keep coverage from regressing by
 adding tests alongside new code.
 

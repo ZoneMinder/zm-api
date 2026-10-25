@@ -69,6 +69,18 @@ impl TestApp {
         .await
     }
 
+    /// [`spawn`](Self::spawn) on a test's own database, for tests that act on
+    /// the whole database (see [`IsolatedDb`](super::isolated::IsolatedDb)).
+    pub async fn spawn_on(db: &super::isolated::IsolatedDb) -> Self {
+        let fixture_db = db.connect().await;
+        let state = AppState::for_test_with_db(db.connect().await);
+        let router = zm_api::routes::create_router_app(state);
+        Self {
+            db: fixture_db,
+            router,
+        }
+    }
+
     /// Build the production router backed by an in-memory mock database.
     ///
     /// Suitable for tests that are rejected before any query runs — auth
