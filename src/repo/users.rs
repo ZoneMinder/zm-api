@@ -158,7 +158,16 @@ pub async fn create(
             .unwrap_or_else(|| "console".to_string())),
         role_id: Set(req.role_id),
     };
-    Ok(am.insert(db).await?)
+    am.insert(db).await.map_err(|e| match e.sql_err() {
+        // `Users.Username` is unique.
+        Some(sea_orm::SqlErr::UniqueConstraintViolation(_)) => {
+            crate::error::AppError::ConflictError(format!(
+                "a user named {:?} already exists",
+                req.username
+            ))
+        }
+        _ => e.into(),
+    })
 }
 
 /// Set a user's bcrypt password hash.

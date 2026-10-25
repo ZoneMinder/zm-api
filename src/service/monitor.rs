@@ -24,11 +24,16 @@ fn monitor_not_found(id: u32) -> AppError {
 
 /// Reject access to a monitor outside the caller's row-level ACL scope.
 ///
-/// Returns `NotFoundError` (404) rather than 403 so monitors the caller may
-/// not see are not revealed to exist.
+/// A monitor the caller can't see is `NotFoundError` (404), so its existence
+/// isn't revealed. One they can see but not change at `required` is
+/// `PermissionDeniedError` (403): GET already shows it exists.
 fn ensure_visible(scope: &MonitorScope, id: u32, required: Level) -> AppResult<()> {
     if scope.allows(id, required) {
         Ok(())
+    } else if scope.allows(id, Level::View) {
+        Err(AppError::PermissionDeniedError(format!(
+            "Edit access to monitor {id} required"
+        )))
     } else {
         Err(monitor_not_found(id))
     }

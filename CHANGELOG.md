@@ -264,6 +264,12 @@ recognisable path forward.
   is now 416 with `Content-Range: bytes */<size>`, as players expect. A range
   whose last byte is past the end (`bytes=0-99999999`) now returns the rest
   of the file instead of 400 (RFC 9110 §14.1.2).
+- **Changing a monitor you can see but not edit is 403, not 404.** A user
+  with a View row on a monitor got 404 from `PATCH /monitors/{id}` (and the
+  other monitor writes) although `GET` showed it. A monitor outside the
+  caller's scope is still 404.
+- **A duplicate username is 409.** `POST /users` with a username already in
+  use returned 500 `DATABASE_ERROR`; it now returns 409 Conflict.
 
 - **The stream socket reader identifies codecs by name.** zmc's HELLO now
   carries FFmpeg's codec name (`hevc`, `aac`, tag `0x0B`, ZoneMinder#5336).

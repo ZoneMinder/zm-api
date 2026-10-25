@@ -50,6 +50,25 @@ impl TestApp {
         }
     }
 
+    /// [`spawn`](Self::spawn) with live view on, as `AppState::new` sets it up,
+    /// reading stream sockets from `socks_dir` (a
+    /// [`FakeZmc`](super::fake_zmc::FakeZmc)'s).
+    pub async fn spawn_live(socks_dir: &std::path::Path) -> Self {
+        let socks = socks_dir.to_string_lossy().into_owned();
+        Self::spawn_with(|state| {
+            let mut config = (*state.config).clone();
+            config.streaming.enabled = true;
+            config.streaming.hls.enabled = true;
+            config.streaming.hls.storage.path = format!("{socks}/hls");
+            // Host candidates only: no public STUN server in tests.
+            config.streaming.webrtc.stun_servers = Vec::new();
+            config.streaming.zoneminder.socks_path = socks;
+            state.config = std::sync::Arc::new(config);
+            state.enable_live_streaming();
+        })
+        .await
+    }
+
     /// Build the production router backed by an in-memory mock database.
     ///
     /// Suitable for tests that are rejected before any query runs — auth
