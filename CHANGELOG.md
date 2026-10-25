@@ -718,6 +718,73 @@ recognisable path forward.
 
 ### Security
 
+- **Generate Video can't replace the event's recording, and the queue has a
+  limit.** A video's file name comes from the event's name, so renaming an
+  event to match its recording (`{id}-video`) and asking for a video with
+  `overwrite` replaced the recording with the render. `POST
+  /api/v3/events/{id}/videos` now refuses (409) a video whose file would be
+  the recording, and a queued job that would land on it fails instead.
+  Each user can have 4 videos queued or running (409 after that), and `size`
+  can be at most 4 times the event's width and height, the same limit as
+  `scale`.
+
+- **RTSP connections must present a working link within 15 seconds.** A
+  connection holds one of the RTSP server's slots from the moment it opens,
+  and `OPTIONS` needs no link, so a client that kept sending `OPTIONS` could
+  hold every slot without ever authenticating and lock out every player. A
+  connection that hasn't presented a working link 15 seconds after it opens
+  is now closed.
+
+- **PTZ can't be pointed at the server itself.** A monitor's
+  `control_address` is set by anyone with Monitors Edit, and PTZ commands
+  make zm-api send requests there. It took any address, followed redirects,
+  and returned up to 512 bytes of whatever answered in the error, so the
+  address could be used to read local services. A control address that
+  reaches this server (loopback, its own addresses) or a cloud metadata
+  address is now refused with 400, host names included, whether the control
+  is native ONVIF or a zmcontrol module. The ONVIF client no longer follows
+  redirects or uses proxy settings, and transport and parse errors say only
+  that the camera didn't answer, or didn't answer as ONVIF.
+
+- **A role's group grants now limit the groups API, and moving a group needs
+  Edit on both parents.** The groups API read only the user's own
+  `Groups_Permissions`, so a user whose role was limited to some groups, with
+  no rows of their own, could see and edit every group. Monitor access already
+  applied the role's group grants to each group's subgroups, so moving a hidden
+  group under a group the role grants made its monitors visible. Now the
+  role's rows count, with the user's own row deciding first, as for monitors.
+  Moving a group with `PUT /api/v3/groups/{id}` needs Edit on the old and the
+  new parent, and creating one under a parent needs Edit on that parent.
+
+- **Onboarding a discovered camera needs Monitors Create.** `POST
+  /api/v3/discovery/onboard` adds a monitor, but it only needed Monitors Edit
+  and unrestricted monitor access, so a user ZoneMinder doesn't allow to add
+  monitors could add them this way. It now needs Monitors Create or System
+  Edit, as `POST /api/v3/monitors` does.
+
+- **`linked_monitors` can only name monitors you can see.** A user who could
+  edit one monitor could link it to any other, including monitors they're
+  denied, and so record events off a hidden camera's alarms. `POST` and
+  `PATCH /api/v3/monitors` now refuse (400) a link to a monitor the caller
+  can't see, with the same message as for one that doesn't exist. The value
+  must also be an expression zmc reads: monitor ids, or `id:zone`, joined by
+  `|`, `&`, `,` and parentheses. ZoneMinder's zmc stops on a piece that isn't
+  a number.
+
+- **Only a monitor's editors can stop its live stream.** `DELETE
+  /api/v3/live/{monitor_id}/stop` ends the session for every viewer, but
+  Stream View was enough to call it, so any viewer could keep cutting off
+  everyone else. It now needs Monitors Edit on that monitor (403 otherwise).
+  Viewers don't need it: closing the player is enough, and idle sessions are
+  reaped.
+
+- **A huge `hours` no longer crashes the request.** `GET
+  /api/v3/events/counts/{hours}` and `/events/counts-by-monitor/{hours}` did
+  date arithmetic on the value unchecked, so any signed-in user could send a
+  number like `9223372036854775807` and panic the request, which a proxy
+  reports as 502. Both now answer 400 unless `hours` is from 1 to 87600 (ten
+  years). Zero and negative values, which used to return nothing, get 400 too.
+
 - **Live WebRTC sessions over the WebSocket are rechecked, capped and timed
   out.** A token or signed link opened `/api/v3/live/{id}/webrtc/ws` once
   and the session then ran until the client left. Now:

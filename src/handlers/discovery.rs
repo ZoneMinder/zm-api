@@ -151,9 +151,10 @@ pub async fn inspect(
 /// Onboard a discovered ONVIF device as a new monitor.
 ///
 /// Inspects the device, picks a media profile's RTSP stream URI, and creates an
-/// `Ffmpeg` monitor with the device's ONVIF URL + credentials. Requires a valid
-/// JWT and unrestricted monitor access (minting monitors is admin-equivalent);
-/// the target URL is SSRF-gated in the service layer.
+/// `Ffmpeg` monitor with the device's ONVIF URL + credentials. Requires
+/// Monitors Create (or System Edit), as `POST /monitors` does, and
+/// unrestricted monitor access; the target URL is SSRF-gated in the service
+/// layer.
 #[utoipa::path(
     post,
     path = "/api/v3/discovery/onboard",
@@ -172,10 +173,17 @@ pub async fn inspect(
 #[instrument(level = "debug", skip(state, req), fields(xaddr = %req.xaddr))]
 pub async fn onboard(
     State(state): State<AppState>,
+    claims: crate::util::claim::UserClaims,
     scope: MonitorScope,
     Json(req): Json<OnboardRequest>,
 ) -> AppResult<Json<MonitorResponse>> {
     req.validate().map_err(AppError::InvalidInputError)?;
+    // It adds a monitor: the same check as `POST /monitors`.
+    if !claims.perms.can_create_monitors() {
+        return Err(AppError::PermissionDeniedError(
+            "Create access to Monitors required".to_string(),
+        ));
+    }
     if scope.is_restricted() {
         return Err(AppError::PermissionDeniedError(
             "onboarding a discovered device requires unrestricted monitor access".to_string(),

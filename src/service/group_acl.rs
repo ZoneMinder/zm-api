@@ -8,10 +8,11 @@
 //! [`resolve_groups`] turns those rows into a [`GroupScope`]. Policy mirrors
 //! [`crate::service::monitor_acl`]:
 //!
-//! * A user with **no** `Groups_Permissions` rows is unrestricted
-//!   ([`GroupScope::All`]) — default-allow, so deployments that never populate
-//!   the table are unaffected.
-//! * Once a user has any row, the rows become an allowlist
+//! * A user with **no** `Groups_Permissions` rows, and whose role has no
+//!   `Role_Groups_Permissions` rows, is unrestricted ([`GroupScope::All`]) —
+//!   default-allow, so deployments that never populate the tables are
+//!   unaffected.
+//! * Once there is any row, the rows become an allowlist
 //!   ([`GroupScope::Restricted`]): only groups with an effective level of
 //!   `View` or higher are visible. `Inherit`/`None` rows grant nothing.
 
@@ -73,28 +74,54 @@ impl GroupScope {
     }
 }
 
-/// Resolve the group access scope for a user from `Groups_Permissions`.
+/// Resolve the group access scope for a user from their `Groups_Permissions`
+/// rows and their role's `Role_Groups_Permissions` rows. As for monitors, the
+/// user's own row decides a group first and the role's second; `Inherit`
+/// leaves it to the role.
 pub async fn resolve_groups(db: &DatabaseConnection, user_id: u32) -> AppResult<GroupScope> {
-    let perms = repo::groups_permissions::find_by_user_id(db, user_id).await?;
+    use crate::repo::monitors_permissions::GrantKind;
+    let grants: Vec<_> = repo::monitors_permissions::find_user_grants(db, user_id)
+        .await?
+        .into_iter()
+        .filter(|g| matches!(g.kind(), GrantKind::Group | GrantKind::RoleGroup))
+        .collect();
 
-    // Default-allow: a user with no permission rows is unrestricted.
-    if perms.is_empty() {
+    // Default-allow: no rows from the user or their role means unrestricted.
+    if grants.is_empty() {
         return Ok(GroupScope::All);
     }
 
-    let mut map: HashMap<u32, Level> = HashMap::new();
-    for gp in &perms {
-        let level = match gp.permission {
-            Permission::View => Level::View,
-            Permission::Edit => Level::Edit,
-            // `Inherit`/`None` grant nothing — the group stays out of the map,
-            // which `allows` treats as denied.
-            Permission::Inherit | Permission::None => continue,
+    let level = |p: &Permission| match p {
+        Permission::Inherit => None,
+        Permission::None => Some(Level::None),
+        Permission::View => Some(Level::View),
+        Permission::Edit => Some(Level::Edit),
+    };
+    let mut own: HashMap<u32, Level> = HashMap::new();
+    let mut role: HashMap<u32, Level> = HashMap::new();
+    for g in &grants {
+        let Some(l) = level(&g.permission) else {
+            continue;
         };
-        let entry = map.entry(gp.group_id).or_insert(Level::None);
-        *entry = (*entry).max(level);
+        let layer = if g.kind() == GrantKind::Group {
+            &mut own
+        } else {
+            &mut role
+        };
+        let entry = layer.entry(g.target_id).or_insert(l);
+        *entry = (*entry).max(l);
     }
 
+    // `None` grants nothing: the group stays out of the map, which `allows`
+    // treats as denied.
+    let mut map: HashMap<u32, Level> = HashMap::new();
+    for id in own.keys().chain(role.keys()) {
+        if let Some(&l) = own.get(id).or_else(|| role.get(id)) {
+            if l > Level::None {
+                map.insert(*id, l);
+            }
+        }
+    }
     Ok(GroupScope::Restricted(map))
 }
 
@@ -149,36 +176,41 @@ impl FromRequestParts<AppState> for GroupScope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entity::groups_permissions;
-    use sea_orm::{DatabaseBackend, MockDatabase};
+    use crate::repo::monitors_permissions::GrantKind;
+    use sea_orm::{DatabaseBackend, MockDatabase, Value};
+    use std::collections::BTreeMap;
 
-    fn grp_perm(id: u32, group_id: u32, permission: Permission) -> groups_permissions::Model {
-        groups_permissions::Model {
-            id,
-            group_id,
-            user_id: 7,
-            permission,
-        }
+    /// A row of `find_user_grants`, as the mock database returns it.
+    fn grant(kind: GrantKind, group_id: u32, permission: &str) -> BTreeMap<String, Value> {
+        BTreeMap::from([
+            ("kind".to_string(), Value::Int(Some(kind as i32))),
+            ("target_id".to_string(), Value::Unsigned(Some(group_id))),
+            (
+                "permission".to_string(),
+                Value::String(Some(permission.to_string())),
+            ),
+        ])
+    }
+
+    async fn scope_of(rows: Vec<BTreeMap<String, Value>>) -> GroupScope {
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results(vec![rows])
+            .into_connection();
+        resolve_groups(&db, 7).await.unwrap()
     }
 
     #[tokio::test]
     async fn no_rows_is_unrestricted() {
-        let db = MockDatabase::new(DatabaseBackend::MySql)
-            .append_query_results::<groups_permissions::Model, _, _>(vec![vec![]])
-            .into_connection();
-        assert_eq!(resolve_groups(&db, 7).await.unwrap(), GroupScope::All);
+        assert_eq!(scope_of(vec![]).await, GroupScope::All);
     }
 
     #[tokio::test]
     async fn grants_form_an_allowlist() {
-        let db = MockDatabase::new(DatabaseBackend::MySql)
-            .append_query_results(vec![vec![
-                grp_perm(1, 10, Permission::View),
-                grp_perm(2, 11, Permission::Edit),
-            ]])
-            .into_connection();
-
-        let scope = resolve_groups(&db, 7).await.unwrap();
+        let scope = scope_of(vec![
+            grant(GrantKind::Group, 10, "View"),
+            grant(GrantKind::Group, 11, "Edit"),
+        ])
+        .await;
         assert!(scope.is_restricted());
         // Group 10: read but not write.
         assert!(scope.allows(10, Level::View));
@@ -191,14 +223,11 @@ mod tests {
 
     #[tokio::test]
     async fn inherit_and_none_grant_nothing() {
-        let db = MockDatabase::new(DatabaseBackend::MySql)
-            .append_query_results(vec![vec![
-                grp_perm(1, 10, Permission::Inherit),
-                grp_perm(2, 11, Permission::None),
-            ]])
-            .into_connection();
-
-        let scope = resolve_groups(&db, 7).await.unwrap();
+        let scope = scope_of(vec![
+            grant(GrantKind::Group, 10, "Inherit"),
+            grant(GrantKind::Group, 11, "None"),
+        ])
+        .await;
         // The user has rows, so the scope is restricted...
         assert!(scope.is_restricted());
         // ...but neither group is visible.
@@ -208,15 +237,33 @@ mod tests {
 
     #[tokio::test]
     async fn highest_level_wins_for_duplicate_rows() {
-        let db = MockDatabase::new(DatabaseBackend::MySql)
-            .append_query_results(vec![vec![
-                grp_perm(1, 10, Permission::View),
-                grp_perm(2, 10, Permission::Edit),
-            ]])
-            .into_connection();
-
-        let scope = resolve_groups(&db, 7).await.unwrap();
+        let scope = scope_of(vec![
+            grant(GrantKind::Group, 10, "View"),
+            grant(GrantKind::Group, 10, "Edit"),
+        ])
+        .await;
         assert!(scope.allows(10, Level::Edit));
+    }
+
+    #[tokio::test]
+    async fn role_rows_restrict_and_the_users_own_row_wins() {
+        let scope = scope_of(vec![
+            grant(GrantKind::RoleGroup, 10, "Edit"),
+            grant(GrantKind::RoleGroup, 11, "Edit"),
+            grant(GrantKind::RoleGroup, 12, "View"),
+            grant(GrantKind::Group, 11, "None"),
+            grant(GrantKind::Group, 12, "Inherit"),
+        ])
+        .await;
+        // Role rows alone make the scope restricted.
+        assert!(scope.is_restricted());
+        assert!(scope.allows(10, Level::Edit));
+        // The user's own None overrides the role's Edit.
+        assert!(!scope.allows(11, Level::View));
+        // Inherit leaves it to the role.
+        assert!(scope.allows(12, Level::View));
+        assert!(!scope.allows(12, Level::Edit));
+        assert!(!scope.allows(99, Level::View));
     }
 
     #[test]

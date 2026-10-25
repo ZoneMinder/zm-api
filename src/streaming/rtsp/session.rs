@@ -55,6 +55,13 @@ pub trait Backend: Clone + Send + Sync + 'static {
     fn reauth_interval(&self) -> Duration {
         Duration::from_secs(60)
     }
+
+    /// How long a new connection has to present a working link. Until then
+    /// it holds a connection slot, and OPTIONS needs no link, so without a
+    /// deadline anyone could hold every slot.
+    fn auth_deadline(&self) -> Duration {
+        Duration::from_secs(15)
+    }
 }
 
 /// How long a connection may sit idle before it plays.
@@ -94,10 +101,18 @@ where
         }
     });
 
+    let auth_by = tokio::time::Instant::now() + backend.auth_deadline();
     let mut conn = Conn::new(backend, tx.clone(), closed.clone());
     loop {
         let wait = if conn.playing.is_some() {
             Duration::from_secs(24 * 60 * 60)
+        } else if conn.bound.is_none() {
+            let left = auth_by.saturating_duration_since(tokio::time::Instant::now());
+            if left.is_zero() {
+                debug!("rtsp {peer}: no working link in time");
+                break;
+            }
+            IDLE_TIMEOUT.min(left)
         } else {
             IDLE_TIMEOUT
         };

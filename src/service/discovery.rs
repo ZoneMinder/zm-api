@@ -396,40 +396,7 @@ fn ensure_inspect_target_allowed(xaddr: &str) -> AppResult<()> {
     target_allowed(xaddr, &own_addresses())
 }
 
-/// This host's interface addresses, which an inspect may not reach: a
-/// service bound to all interfaces answers on them as it does on loopback.
-fn own_addresses() -> Vec<IpAddr> {
-    let Ok(addrs) = nix::ifaddrs::getifaddrs() else {
-        return Vec::new();
-    };
-    addrs
-        .filter_map(|a| a.address)
-        .filter_map(|sa| {
-            if let Some(v4) = sa.as_sockaddr_in() {
-                Some(IpAddr::V4(v4.ip()))
-            } else {
-                sa.as_sockaddr_in6().map(|v6| IpAddr::V6(v6.ip()))
-            }
-        })
-        .collect()
-}
-
-/// Cloud metadata services (AWS, GCP, Azure, ...; AWS's IPv6 one), which
-/// hand out credentials to whatever asks from inside the instance.
-const METADATA: [IpAddr; 2] = [
-    IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)),
-    IpAddr::V6(Ipv6Addr::new(0xfd00, 0xec2, 0, 0, 0, 0, 0, 0x254)),
-];
-
-/// A private address that is still off limits: this server (loopback, the
-/// unspecified address, its own interfaces) or a cloud metadata service.
-fn is_server_or_metadata(ip: IpAddr, own: &[IpAddr]) -> bool {
-    let ip = match ip {
-        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
-        v4 => v4,
-    };
-    ip.is_loopback() || ip.is_unspecified() || METADATA.contains(&ip) || own.contains(&ip)
-}
+use crate::util::net_guard::{is_server_or_metadata, own_addresses};
 
 /// [`ensure_inspect_target_allowed`] with the server's addresses passed in.
 fn target_allowed(xaddr: &str, own: &[IpAddr]) -> AppResult<()> {

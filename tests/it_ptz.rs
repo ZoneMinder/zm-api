@@ -52,3 +52,58 @@ async fn get_capabilities_for_missing_monitor_is_not_found() {
         .await;
     assert_error(&resp, StatusCode::NOT_FOUND, "MONITOR_NOT_FOUND_ERROR");
 }
+
+/// A control address that reaches this server is refused before any request
+/// is sent. `ControlAddress` is set by anyone with Monitors Edit.
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn ptz_refuses_a_control_address_on_this_server() {
+    use common::fixtures::{unique_name, RowGuard};
+    use serde_json::json;
+
+    let app = TestApp::spawn().await;
+    let token = superuser_token();
+    let control = app
+        .post_json(
+            "/api/v3/controls",
+            &token,
+            &json!({ "name": unique_name("PtzLoop"), "protocol": "onvif", "can_move": 1,
+                     "can_move_con": 1 }),
+        )
+        .await;
+    assert!(control.status().is_success(), "{}", control.text());
+    let control_id = control.json::<serde_json::Value>()["id"].as_u64().unwrap() as u32;
+    let _c = RowGuard::control(control_id);
+
+    for address in [
+        "http://127.0.0.1:9/onvif/ptz_service",
+        "admin:x@169.254.169.254:80",
+    ] {
+        let monitor = app
+            .post_json(
+                "/api/v3/monitors",
+                &token,
+                &json!({ "name": unique_name("PtzLoop"), "type": "Ffmpeg", "controllable": 1,
+                         "control_id": control_id, "control_address": address }),
+            )
+            .await;
+        assert!(monitor.status().is_success(), "{}", monitor.text());
+        let mid = monitor.json::<serde_json::Value>()["id"].as_u64().unwrap() as u32;
+        let _m = RowGuard::monitor(mid);
+
+        let r = app
+            .post_json(
+                &format!("/api/v3/ptz/monitors/{mid}/move/up"),
+                &token,
+                &json!({}),
+            )
+            .await;
+        assert_eq!(
+            r.status(),
+            StatusCode::BAD_REQUEST,
+            "{address}: {}",
+            r.text()
+        );
+        assert!(r.text().contains("this server"), "{address}: {}", r.text());
+    }
+}
