@@ -58,7 +58,7 @@ async fn test_api_devices_list() {
 
     // Test: List devices
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
 
     let response = app
         .oneshot(
@@ -95,7 +95,7 @@ async fn test_api_devices_get() {
 
     // Test: Get device by ID
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
 
     let response = app
         .oneshot(
@@ -137,7 +137,7 @@ async fn test_api_devices_create_delete() {
 
     // Test: Delete device
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
 
     let response = app
         .oneshot(

@@ -14,7 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 /// The status line of a WebSocket upgrade request to `path`.
 async fn upgrade_status(path: &str, token: Option<&str>) -> String {
     let state = zm_api::server::state::AppState::for_test_with_db(get_test_db().await.unwrap());
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {

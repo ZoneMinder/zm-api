@@ -269,6 +269,18 @@ recognisable path forward.
 - **Starting a daemon zm-api won't run is 400.** `POST /daemons/{id}/start`
   for a command that isn't one of ZoneMinder's daemons answered 200 with
   `"success": false`.
+- **The OpenAPI document describes every response.** Each operation now has
+  a `default` response with the standard error body (`AppResponseError`), so
+  clients get a schema for 401, 403, 404 and 500 wherever they occur. The
+  motion synopsis endpoints (`/events/{id}/synopsis`, `/layout`, `/mp4`,
+  `/review` and `/events/synopsis`) were served but missing from the
+  document, and are now in it. `GET /host/getVersion` and
+  `POST /server/control/{action}` documented their errors as
+  `MessageResponse`, and `GET /daemons` its 503 with no body; they now say
+  `AppResponseError`, which is what they send. `MonitorPresetResponse.max_fps`
+  was documented as a number but has always been sent as a decimal string
+  (`"5.000"`); the document now says string. Integration tests check every
+  JSON response against the document (#237).
 - **HTTP/2 with Let's Encrypt (ACME).** In ACME mode the TLS config came
   from rustls-acme's default, which advertises no ALPN protocol, so browsers
   spoke HTTP/1.1 and its six connections per host held back HLS grids. It

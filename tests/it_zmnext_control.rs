@@ -315,7 +315,7 @@ async fn monitor_events_stream_status_changes() {
             ..Default::default()
         },
     )));
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
     let req = axum::http::Request::builder()
         .uri(format!(
             "/api/v3/monitors/{}/events?token={}",

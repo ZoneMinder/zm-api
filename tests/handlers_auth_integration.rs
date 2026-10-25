@@ -67,7 +67,7 @@ async fn test_api_auth_login_refresh_logout() {
         .expect("Failed to create test user");
 
     let state = zm_api::server::state::AppState::for_test_with_db(setup_db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
 
     let login_body = serde_json::to_vec(&LoginRequest {
         username: username.clone(),
@@ -182,7 +182,7 @@ async fn test_me_returns_authenticated_user() {
         .await
         .expect("create user");
     let state = zm_api::server::state::AppState::for_test_with_db(setup_db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
 
     let tokens = login(&app, &username, password).await;
 
@@ -247,7 +247,7 @@ async fn test_change_password_flow() {
         .await
         .expect("create user");
     let state = zm_api::server::state::AppState::for_test_with_db(setup_db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
 
     let tokens = login(&app, &username, password).await;
     let auth = format!("Bearer {}", tokens.access_token);
@@ -395,7 +395,7 @@ async fn me_is_readable_by_a_user_with_no_system_permission() {
         .await
         .expect("create permission-poor user");
     let state = zm_api::server::state::AppState::for_test_with_db(setup_db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
 
     let tokens = login(&app, &username, password).await;
     let resp = app

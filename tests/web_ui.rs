@@ -110,7 +110,7 @@ async fn spa_fallback_does_not_shadow_api_404s() {
 
     let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    let app = zm_api::routes::create_router_app(state);
+    let app = common::schema::checked(zm_api::routes::create_router_app(state));
 
     // Genuinely unmatched paths: these reach the fallback, so they prove the
     // fallback itself does the right thing.

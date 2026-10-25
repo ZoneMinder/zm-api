@@ -188,6 +188,8 @@ assert-json-diff = "2"
 tower = "0.5"
 # Temporary directories for tests
 tempfile = "3"
+# Validates integration-test responses against the OpenAPI document (#237)
+jsonschema = { version = "0.60", default-features = false }
 
 # jemalloc as the process-wide allocator. The server is a long-running,
 # allocation-bursty media workload; glibc malloc retains freed buffers in its

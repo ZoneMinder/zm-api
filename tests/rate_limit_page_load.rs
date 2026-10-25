@@ -9,6 +9,8 @@
 //! Drives the real router, so it tests the layer as wired rather than the
 //! config in isolation.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::util::ServiceExt;
@@ -22,7 +24,7 @@ fn router() -> axum::Router {
     use sea_orm::{DatabaseBackend, MockDatabase};
     let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
     let state = zm_api::server::state::AppState::for_test_with_db(db);
-    zm_api::routes::create_router_app(state)
+    common::schema::checked(zm_api::routes::create_router_app(state))
 }
 
 fn ci() -> axum::extract::ConnectInfo<std::net::SocketAddr> {
