@@ -259,6 +259,11 @@ recognisable path forward.
 
 ### Fixed
 
+- **`localhost` reaches MariaDB through its socket on openSUSE too.** zm-api
+  connects to `localhost` through the standard socket, as libmysqlclient does
+  (#217), but its list lacked openSUSE's `/run/mysql/mysql.sock`, so it fell
+  back to TCP. On a server with `skip-name-resolve` the `zmuser@localhost`
+  grant then refused it and zm-api didn't start.
 - **Event video byte ranges follow HTTP.** `GET /events/{id}/video` and
   `/stream/video.mp4` answered a range past the end of the file with 400; it
   is now 416 with `Content-Range: bytes */<size>`, as players expect. A range
