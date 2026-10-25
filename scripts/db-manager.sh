@@ -133,6 +133,12 @@ process_schema() {
               -e 's/@PKGDATADIR@/./g' \
         > "$output_file"
 
+    # The Config rows a fresh install has (zmconfgen.pl puts them in the
+    # packaged zm_create.sql; the .in file has none).
+    if [ -f "$PROJECT_ROOT/db/zm_config.sql" ]; then
+        cat "$PROJECT_ROOT/db/zm_config.sql" >> "$output_file"
+    fi
+
     echo "$output_file"
 }
 

@@ -124,6 +124,7 @@ impl TestApp {
             token: None,
             raw_auth_value: false,
             body: None,
+            headers: Vec::new(),
         }
     }
 
@@ -182,6 +183,7 @@ pub struct TestRequest {
     token: Option<String>,
     raw_auth_value: bool,
     body: Option<(Vec<u8>, &'static str)>,
+    headers: Vec<(String, String)>,
 }
 
 impl TestRequest {
@@ -197,6 +199,12 @@ impl TestRequest {
     pub fn raw_auth(mut self, value: &str) -> Self {
         self.token = Some(value.to_string());
         self.raw_auth_value = true;
+        self
+    }
+
+    /// Add a request header (`Range`, say).
+    pub fn header(mut self, name: &str, value: &str) -> Self {
+        self.headers.push((name.to_string(), value.to_string()));
         self
     }
 
@@ -224,6 +232,9 @@ impl TestRequest {
                 format!("Bearer {token}")
             };
             builder = builder.header(header::AUTHORIZATION, value);
+        }
+        for (name, value) in &self.headers {
+            builder = builder.header(name.as_str(), value.as_str());
         }
         // Production serves with `into_make_service_with_connect_info`, so every
         // real request carries a `ConnectInfo<SocketAddr>`. The rate-limit layer

@@ -3,6 +3,7 @@ pub mod assertions;
 pub mod fake_zmc;
 pub mod fixtures;
 pub mod harness;
+pub mod media;
 pub mod test_db;
 pub mod users;
 
