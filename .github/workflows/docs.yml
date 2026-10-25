@@ -49,7 +49,16 @@ jobs:
             libavdevice-dev libavcodec-dev libswscale-dev libswresample-dev
 
       - uses: dtolnay/rust-toolchain@stable
+
+      # Build caches hold objects compiled against this runner's FFmpeg. When
+      # GitHub moves ubuntu-latest to a new release, an old cache links against
+      # the new libraries and fails on removed functions, so key on the version.
+      - name: Key the build cache to this FFmpeg
+        run: echo "FFMPEG_KEY=$(. /etc/os-release; echo "$ID-$VERSION_ID")-avcodec-$(pkg-config --modversion libavcodec)" >> "$GITHUB_ENV"
+
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ env.FFMPEG_KEY }}
 
       - name: Install mdBook
         run: cargo install mdbook --version ${{ env.MDBOOK_VERSION }} --locked
