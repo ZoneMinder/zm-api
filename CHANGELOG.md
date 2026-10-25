@@ -259,6 +259,13 @@ recognisable path forward.
 
 ### Fixed
 
+- **The stream socket reader identifies codecs by name.** zmc's HELLO now
+  carries FFmpeg's codec name (`hevc`, `aac`, tag `0x0B`, ZoneMinder#5336).
+  zm-api uses it ahead of the numeric `AVCodecID`, which changes between
+  FFmpeg versions, so H.265 and audio work when zmc and zm-api link different
+  FFmpegs. A zmc that sends no name falls back to the id, then to the
+  parameter sets (#212).
+
 - **A new monitor gets a full-frame zone.** ZoneMinder's monitor editor adds
   an "All" zone to every monitor it creates, and `POST /api/v3/monitors` did
   not, so a Modect monitor added through the API never alarmed. It now adds
