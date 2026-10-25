@@ -264,6 +264,12 @@ recognisable path forward.
   (#217), but its list lacked openSUSE's `/run/mysql/mysql.sock`, so it fell
   back to TCP. On a server with `skip-name-resolve` the `zmuser@localhost`
   grant then refused it and zm-api didn't start.
+- **Changing a monitor you can see but not edit is 403, not 404.** A user
+  with a View row on a monitor got 404 from `PATCH /monitors/{id}` (and the
+  other monitor writes) although `GET` showed it. A monitor outside the
+  caller's scope is still 404.
+- **A duplicate username is 409.** `POST /users` with a username already in
+  use returned 500 `DATABASE_ERROR`; it now returns 409 Conflict.
 
 - **The stream socket reader identifies codecs by name.** zmc's HELLO now
   carries FFmpeg's codec name (`hevc`, `aac`, tag `0x0B`, ZoneMinder#5336).
