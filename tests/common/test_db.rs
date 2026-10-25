@@ -17,7 +17,19 @@ pub async fn get_test_db() -> Result<DatabaseConnection, DbErr> {
         .or_else(|_| env::var("DATABASE_URL"))
         .unwrap_or_else(|_| "mysql://zmuser:zmpass@127.0.0.1:3307/zm_test".to_string());
 
-    Database::connect(&db_url).await
+    Database::connect(with_production_session(&db_url)).await
+}
+
+/// `url` with the session options zm-api's own URL carries
+/// (`DatabaseConfig::create_url`): `timezone=SYSTEM`, so the session runs in
+/// the server's zone as in production (#98). Without it sqlx sets UTC, and a
+/// test on a non-UTC server would not see what production sees.
+fn with_production_session(url: &str) -> String {
+    if !url.starts_with("mysql://") || url.contains("timezone=") {
+        return url.to_string();
+    }
+    let sep = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{sep}timezone=SYSTEM")
 }
 
 /// Apply zm-api's migrations to the test database, one process at a time.

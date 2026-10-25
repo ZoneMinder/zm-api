@@ -246,6 +246,34 @@ hls_plays_from_a_signed_link() {
 # so this does not depend on the webrtc crate zm-api is built with. Debian
 # hosts only: Ubuntu's chromium package is a snap stub.
 has_chromium() { command -v chromium >/dev/null 2>&1; }
+# ZoneMinder's database account works through the socket only, as on a host
+# with skip-name-resolve (database.sh).
+tcp_login_refused() {
+  local client=mariadb
+  command -v mariadb >/dev/null 2>&1 || client=mysql
+  ! "$client" -h127.0.0.1 --protocol=TCP -u"$(zm_conf ZM_DB_USER)" -p"$(zm_conf ZM_DB_PASS)" \
+    -e 'SELECT 1' >/dev/null 2>&1
+}
+# Point the monitor at another camera path and restart zmc on it.
+use_camera() {
+  db "UPDATE Monitors SET Path='rtsp://127.0.0.1:8554/$1' WHERE Id=$(monitor_id)"
+  monitor_state stop && wait_until 30 no_zmc \
+    && monitor_state start && wait_until 30 zmc_pid && wait_until 60 capturing
+}
+# Live HLS is H.265: the init segment's sample entry is hvc1 or hev1.
+hls_is_hevc() {
+  local id file="$STATE/init.mp4"; id="$(monitor_id)"
+  api POST "/api/v3/live/${id}/start" -H 'content-type: application/json' \
+    -d '{"enable_hls":true}' >/dev/null || return 1
+  local rc=1
+  if wait_until 30 api_grep GET "/api/v3/live/${id}/hls/live.m3u8" '\.m4s' \
+    && api GET "/api/v3/live/${id}/hls/init.mp4" -o "$file" \
+    && grep -aqE 'hvc1|hev1' "$file"; then
+    rc=0
+  fi
+  api DELETE "/api/v3/live/${id}/stop" >/dev/null 2>&1 || true
+  return $rc
+}
 webrtc_plays() {
   local id log="$ARTIFACTS/webrtc-chromium.log"
   id="$(monitor_id)"

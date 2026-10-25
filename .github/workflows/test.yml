@@ -20,11 +20,16 @@ jobs:
         rust: [stable]
     env:
       APP_PROFILE: test-db
-    
+      # Off UTC, as most installs are: TIMESTAMP and DATETIME handling only
+      # goes wrong when the server's zone isn't UTC (#98, #216). The database
+      # below runs in the same zone.
+      TZ: America/New_York
+
     services:
       mysql:
         image: mariadb:11.8
         env:
+          TZ: America/New_York
           MYSQL_ROOT_PASSWORD: test_root_pass
           MYSQL_DATABASE: zm_test
           MYSQL_USER: zm_test_user
@@ -131,6 +136,100 @@ jobs:
       - name: Check for leaked fixture rows
         if: always()
         run: cargo run --bin fixture-doctor -- --max-age-secs 0
+        env:
+          DATABASE_URL: mysql://zm_test_user:zm_test_pass@127.0.0.1:3307/zm_test
+
+  # The integration tests on the databases distributions ship, beside the
+  # MariaDB 11.8 of the main job: MariaDB 10.11 (Debian 12, Ubuntu 24.04) and
+  # MySQL 8.0 (the RHEL 9 family).
+  db-compat:
+    name: Database compatibility (${{ matrix.db.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db:
+          - name: MariaDB 10.11
+            image: mariadb:10.11
+            health: healthcheck.sh --connect --innodb_initialized
+          - name: MySQL 8.0
+            image: mysql:8.0
+            health: mysqladmin ping -h 127.0.0.1 -ptest_root_pass
+    env:
+      APP_PROFILE: test-db
+      TZ: America/New_York
+
+    services:
+      mysql:
+        image: ${{ matrix.db.image }}
+        env:
+          TZ: America/New_York
+          MYSQL_ROOT_PASSWORD: test_root_pass
+          MYSQL_DATABASE: zm_test
+          MYSQL_USER: zm_test_user
+          MYSQL_PASSWORD: zm_test_pass
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="${{ matrix.db.health }}"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Generate JWT keys
+        run: bash scripts/generate-jwt-keys.sh
+
+      - name: Install FFmpeg development libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libavutil-dev libavformat-dev libavfilter-dev \
+            libavdevice-dev libavcodec-dev libswscale-dev libswresample-dev \
+            ffmpeg
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      # Build caches hold objects compiled against this runner's FFmpeg. When
+      # GitHub moves ubuntu-latest to a new release, an old cache links against
+      # the new libraries and fails on removed functions, so key on the version.
+      - name: Key the build cache to this FFmpeg
+        run: echo "FFMPEG_KEY=$(. /etc/os-release; echo "$ID-$VERSION_ID")-avcodec-$(pkg-config --modversion libavcodec)" >> "$GITHUB_ENV"
+
+      - name: Cache cargo build
+        uses: actions/cache@v5
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ env.FFMPEG_KEY }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      # MySQL 8 logs binary by default and then refuses ZoneMinder's triggers
+      # from a user without SUPER. ZoneMinder's installer loads the schema as
+      # root; here the test user loads it, so trust its triggers.
+      - name: Allow the test user to create triggers
+        run: >-
+          mysql -h127.0.0.1 -P3307 -uroot -ptest_root_pass
+          -e "SET GLOBAL log_bin_trust_function_creators = 1"
+
+      - name: Load the ZoneMinder schema
+        run: ./scripts/setup-ci-db.sh mysql
+        env:
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: 3307
+          MYSQL_USER: zm_test_user
+          MYSQL_PASSWORD: zm_test_pass
+          MYSQL_DATABASE: zm_test
+
+      - name: Run integration tests
+        run: cargo test --no-fail-fast --test '*' -- --include-ignored
         env:
           DATABASE_URL: mysql://zm_test_user:zm_test_pass@127.0.0.1:3307/zm_test
 
