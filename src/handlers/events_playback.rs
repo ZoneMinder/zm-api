@@ -362,10 +362,12 @@ fn parse_range_header(range_header: Option<&str>, file_size: u64) -> Option<(u64
         (start, file_size - 1)
     } else {
         let start: u64 = parts[0].parse().ok()?;
+        // A last-pos at or past the end means "to the end" (RFC 9110
+        // §14.1.2), as players send for a file of unknown length.
         let end = if parts[1].is_empty() {
             file_size - 1
         } else {
-            parts[1].parse().ok()?
+            parts[1].parse::<u64>().ok()?.min(file_size - 1)
         };
         (start, end)
     };
@@ -620,11 +622,22 @@ async fn serve_file_with_range(path: &StdPath, headers: &HeaderMap) -> Result<Re
                 .header(header::CONTENT_LENGTH, length.to_string())
                 .body(Body::from_stream(stream))
                 .unwrap());
-        } else {
-            return Err(AppError::BadRequestError(
-                "Invalid Range header".to_string(),
-            ));
+        } else if range_str.starts_with("bytes=") {
+            // Nothing in the file satisfies it: 416 with the length, so the
+            // client can ask again (RFC 9110 §15.5.17).
+            let body = crate::error::AppResponseError::new(
+                "RANGE_NOT_SATISFIABLE",
+                format!("Range {range_str:?} is outside the {file_size}-byte file"),
+                None,
+                vec![],
+            );
+            return Ok(axum::response::IntoResponse::into_response((
+                StatusCode::RANGE_NOT_SATISFIABLE,
+                [(header::CONTENT_RANGE, format!("bytes */{file_size}"))],
+                axum::Json(body),
+            )));
         }
+        // Another range unit: ignore the header and send the whole file.
     }
 
     // No range request - stream the full file from disk rather than reading it
@@ -971,10 +984,18 @@ mod tests {
         assert_eq!(parse_range_header(Some("bytes=500-400"), 1000), None);
     }
 
+    /// RFC 9110 §14.1.2: a last-pos at or past the end means "to the end".
     #[test]
-    fn parse_range_header_rejects_end_beyond_file() {
-        assert_eq!(parse_range_header(Some("bytes=0-2000"), 1000), None);
-        assert_eq!(parse_range_header(Some("bytes=0-1000"), 1000), None);
+    fn parse_range_header_clamps_end_beyond_file() {
+        assert_eq!(
+            parse_range_header(Some("bytes=0-2000"), 1000),
+            Some((0, 999))
+        );
+        assert_eq!(
+            parse_range_header(Some("bytes=0-1000"), 1000),
+            Some((0, 999))
+        );
+        assert_eq!(parse_range_header(Some("bytes=1000-1500"), 1000), None);
     }
 
     #[test]

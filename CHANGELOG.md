@@ -259,6 +259,12 @@ recognisable path forward.
 
 ### Fixed
 
+- **Event video byte ranges follow HTTP.** `GET /events/{id}/video` and
+  `/stream/video.mp4` answered a range past the end of the file with 400; it
+  is now 416 with `Content-Range: bytes */<size>`, as players expect. A range
+  whose last byte is past the end (`bytes=0-99999999`) now returns the rest
+  of the file instead of 400 (RFC 9110 §14.1.2).
+
 - **The stream socket reader identifies codecs by name.** zmc's HELLO now
   carries FFmpeg's codec name (`hevc`, `aac`, tag `0x0B`, ZoneMinder#5336).
   zm-api uses it ahead of the numeric `AVCodecID`, which changes between

@@ -2,6 +2,7 @@
 pub mod assertions;
 pub mod fixtures;
 pub mod harness;
+pub mod media;
 pub mod test_db;
 
 use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
