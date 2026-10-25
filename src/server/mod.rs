@@ -228,7 +228,7 @@ impl AppServer {
                     })
                     .state();
 
-                let acceptor = state.axum_acceptor(state.default_rustls_config());
+                let acceptor = state.axum_acceptor(acme_server_config(&state));
                 let http01_service = match acme.challenge {
                     AcmeChallenge::Http01 => Some(state.http01_challenge_tower_service()),
                     AcmeChallenge::TlsAlpn01 => None,
@@ -281,9 +281,7 @@ impl AppServer {
                     )
                 })?;
                 tracing::info!("Starting HTTPS server on: {addr}");
-                let tls =
-                    axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path)
-                        .await?;
+                let tls = tls_from_pem_files(cert_path, key_path).await?;
                 let handle = axum_server::Handle::new();
                 spawn_graceful_shutdown(handle.clone(), shutdown_timeout);
                 axum_server::bind_rustls(addr, tls)
@@ -329,4 +327,29 @@ impl AppServer {
 
         server_result
     }
+}
+
+/// The TLS config for ACME mode: rustls-acme's, which advertises no ALPN
+/// protocol, with HTTP/2 and HTTP/1.1 added. Without ALPN a browser speaks
+/// HTTP/1.1, and its six connections per host stall a grid of live views.
+/// The acceptor still answers TLS-ALPN-01 challenges with its own config.
+pub fn acme_server_config<EC, EA>(
+    state: &rustls_acme::AcmeState<EC, EA>,
+) -> std::sync::Arc<rustls::ServerConfig>
+where
+    EC: std::fmt::Debug + 'static,
+    EA: std::fmt::Debug + 'static,
+{
+    let mut config = (*state.default_rustls_config()).clone();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    std::sync::Arc::new(config)
+}
+
+/// The TLS config for certificate-file mode (`server.tls`). axum-server's
+/// advertises HTTP/2 and HTTP/1.1.
+pub async fn tls_from_pem_files(
+    cert_path: impl AsRef<std::path::Path>,
+    key_path: impl AsRef<std::path::Path>,
+) -> std::io::Result<axum_server::tls_rustls::RustlsConfig> {
+    axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path).await
 }

@@ -259,6 +259,11 @@ recognisable path forward.
 
 ### Fixed
 
+- **HTTP/2 with Let's Encrypt (ACME).** In ACME mode the TLS config came
+  from rustls-acme's default, which advertises no ALPN protocol, so browsers
+  spoke HTTP/1.1 and its six connections per host held back HLS grids. It
+  now offers `h2` and `http/1.1`, as certificate-file mode already did.
+
 - **Changing a monitor you can see but not edit is 403, not 404.** A user
   with a View row on a monitor got 404 from `PATCH /monitors/{id}` (and the
   other monitor writes) although `GET` showed it. A monitor outside the
