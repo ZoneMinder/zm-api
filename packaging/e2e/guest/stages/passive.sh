@@ -44,6 +44,12 @@ if has_zoneminder; then
     note "no chromium on ${E2E_DISTRO}: WebRTC browser check skipped"
   fi
 
+  section "An H.265 camera"
+  check "zmc captures the H.265 camera" use_camera cam265
+  check "snapshot from H.265 is a JPEG" snapshot_is_jpeg
+  check "live HLS carries H.265" hls_is_hevc
+  check "back on the H.264 camera" use_camera cam
+
   section "ZoneMinder still in charge"
   check "zoneminder.service running" svc_active zoneminder.service
     check_eq "zmc is supervised by zmdc.pl" "$(zmdc_pid)" "$(zmc_parent)"
