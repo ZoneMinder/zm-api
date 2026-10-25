@@ -144,18 +144,9 @@ async fn saved_jpegs_are_served_by_number_name_and_frame_row() {
     drop(f.tmp);
 }
 
-/// Two seconds at 10fps, black then white, into `path`. `extra` adds ffmpeg
-/// output flags. False when the ffmpeg binary isn't available.
+/// Two seconds at 10fps, black then white, 64x64, into `path`.
 fn black_then_white_mp4(path: &std::path::Path, extra: &[&str]) -> bool {
-    std::process::Command::new("ffmpeg")
-        .args(["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"])
-        .arg("color=c=black:s=64x64:r=10:d=1[b];color=c=white:s=64x64:r=10:d=1[w];[b][w]concat=n=2:v=1")
-        .args(["-c:v", "libx264", "-g", "20", "-pix_fmt", "yuv420p"])
-        .args(extra)
-        .arg(path)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    common::media::black_then_white_mp4(path, "64x64", extra)
 }
 
 fn luma(jpeg: &[u8]) -> f64 {

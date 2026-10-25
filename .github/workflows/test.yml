@@ -62,15 +62,16 @@ jobs:
       - name: Generate JWT keys
         run: bash scripts/generate-jwt-keys.sh
 
-      # ffmpeg-sys-next links the FFmpeg shared libraries via pkg-config.
-      # ubuntu-latest preinstalls only the ffmpeg binary, not the -dev
-      # packages, so the dev libraries must be installed explicitly.
+      # ffmpeg-sys-next links the FFmpeg shared libraries via pkg-config, so
+      # the -dev packages are needed. The ffmpeg binary builds the media
+      # fixtures; tests that need it fail in CI without it (tests/common/media.rs).
       - name: Install FFmpeg development libraries
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libavutil-dev libavformat-dev libavfilter-dev \
-            libavdevice-dev libavcodec-dev libswscale-dev libswresample-dev
+            libavdevice-dev libavcodec-dev libswscale-dev libswresample-dev \
+            ffmpeg
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -186,7 +187,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libavutil-dev libavformat-dev libavfilter-dev \
-            libavdevice-dev libavcodec-dev libswscale-dev libswresample-dev
+            libavdevice-dev libavcodec-dev libswscale-dev libswresample-dev \
+            ffmpeg
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -303,7 +305,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libavutil-dev libavformat-dev libavfilter-dev \
-            libavdevice-dev libavcodec-dev libswscale-dev libswresample-dev
+            libavdevice-dev libavcodec-dev libswscale-dev libswresample-dev \
+            ffmpeg
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
