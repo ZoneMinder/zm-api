@@ -10,7 +10,7 @@ use crate::client::{
 use crate::configure::{self, env::get_env_source, AppConfig};
 use crate::constant::ENV_PREFIX;
 use crate::daemon::DaemonManager;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::ptz::PtzManager;
 use crate::service::search::SearchService;
 use crate::service::synopsis::SynopsisService;
@@ -60,7 +60,8 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(mut config: AppConfig) -> AppResult<Self> {
-        crate::configure::server::set_public_prefix(&config.server.public_prefix);
+        crate::configure::server::set_public_prefix(&config.server.public_prefix)
+            .map_err(|e| AppError::ConfigError(config::ConfigError::Message(e)))?;
         let db = Arc::new(DatabaseClient::build_from_config(&config).await?);
 
         // zm-next is on only where it is installed: `enabled = "auto"` (the

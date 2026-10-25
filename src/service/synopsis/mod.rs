@@ -184,7 +184,11 @@ impl SynopsisService {
             row.status,
             crate::entity::sea_orm_active_enums::SynopsisStatus::Ready
         )
-        .then(|| format!("/api/v3/events/{event_id}/synopsis/mp4"));
+        .then(|| {
+            crate::configure::server::public_path(&format!(
+                "/api/v3/events/{event_id}/synopsis/mp4"
+            ))
+        });
         Ok(SynopsisStatusView {
             status: row.status,
             url,
