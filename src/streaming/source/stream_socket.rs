@@ -392,10 +392,21 @@ impl StreamSocketReader {
         let hello = protocol::parse_hello(payload)?;
         match stream_id {
             StreamId::Video => {
-                let mut codec = protocol::video_codec_from_id(hello.codec_id);
-                if codec == VideoCodec::Unknown {
-                    // The id is in zmc's FFmpeg numbering, which need not be
-                    // ours (#212); the parameter sets say what it is.
+                // The name is the same in every FFmpeg version; the id is
+                // in zmc's FFmpeg numbering, which need not be ours (#212).
+                let mut codec = if hello.codec_name.is_empty() {
+                    protocol::video_codec_from_id(hello.codec_id)
+                } else {
+                    protocol::video_codec_from_name(&hello.codec_name)
+                };
+                if codec == VideoCodec::Unknown && !hello.codec_name.is_empty() {
+                    warn!(
+                        "Monitor {}: unsupported video codec {} on stream socket",
+                        self.monitor_id, hello.codec_name
+                    );
+                } else if codec == VideoCodec::Unknown {
+                    // An older zmc sends no name, so the parameter sets
+                    // settle an id this build doesn't know.
                     codec = codec_from_extradata(&hello.extradata);
                     if codec == VideoCodec::Unknown {
                         warn!(
@@ -445,7 +456,11 @@ impl StreamSocketReader {
                 self.pending.push_back(SocketEvent::VideoParams { codec });
             }
             StreamId::Audio => {
-                let codec = protocol::audio_codec_from_id(hello.codec_id);
+                let codec = if hello.codec_name.is_empty() {
+                    protocol::audio_codec_from_id(hello.codec_id)
+                } else {
+                    protocol::audio_codec_from_name(&hello.codec_name)
+                };
                 let adts = if codec == AudioCodec::Aac {
                     let wrapper = AdtsWrapper::from_asc(&hello.extradata);
                     if wrapper.is_none() {
@@ -848,6 +863,41 @@ mod tests {
         };
         assert_eq!(h265_nal_type(&last.data), Some(19));
         assert!(last.is_keyframe);
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The codec name in the HELLO decides, whatever the numeric id says: here
+    /// the id is H.264 in this build's numbering, as it could be by accident
+    /// from a zmc on another FFmpeg, and there are no parameter sets to sniff.
+    #[tokio::test]
+    async fn codec_name_beats_the_numeric_id() {
+        let dir = test_sock_dir("codec-name");
+        let sock = dir.join("stream_8.sock");
+
+        let mut video_hello = tlv_u32(0x01, h264_codec_id());
+        video_hello.extend_from_slice(&tlv(0x0B, b"hevc"));
+        let mut audio_hello = tlv_u32(0x01, u32::MAX - 1);
+        audio_hello.extend_from_slice(&tlv(0x0B, b"pcm_mulaw"));
+
+        let mut script = Vec::new();
+        script.extend_from_slice(&encode_message(0x01, 0, 0, 0, 0, 0, &video_hello));
+        script.extend_from_slice(&encode_message(0x01, 1, 0, 0, 0, 0, &audio_hello));
+
+        let server = spawn_fake_zmc(sock, script, false);
+        let mut reader = StreamSocketReader::new(8, test_config(&dir));
+        reader.connect().await.expect("connect");
+
+        let events = collect_events(&mut reader, 2).await;
+        let SocketEvent::VideoParams { codec } = &events[0] else {
+            panic!("expected VideoParams first, got {:?}", events[0]);
+        };
+        assert_eq!(*codec, VideoCodec::H265);
+        let SocketEvent::AudioParams { codec } = &events[1] else {
+            panic!("expected AudioParams second, got {:?}", events[1]);
+        };
+        assert_eq!(*codec, AudioCodec::G711Ulaw);
 
         server.abort();
         let _ = std::fs::remove_dir_all(&dir);

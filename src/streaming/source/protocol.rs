@@ -97,6 +97,9 @@ const TLV_SAMPLE_RATE: u8 = 0x07; // u32
 const TLV_CHANNELS: u8 = 0x08; // u32
 const TLV_PROFILE: u8 = 0x09; // u32
 const TLV_LEVEL: u8 = 0x0A; // u32
+/// utf8, FFmpeg's codec name (`h264`, `hevc`, `aac`). Unlike the id, it
+/// doesn't change between FFmpeg versions.
+const TLV_CODEC_NAME: u8 = 0x0B;
 
 // EVENT codes. Lifecycle codes are canonical (also emitted by stock zmc on the
 // `feature/stream-socket-events` branch); the 0x03xx range is zm-next's
@@ -331,12 +334,14 @@ pub fn parse_header(buf: &[u8; HEADER_SIZE]) -> Result<Header, ProtocolError> {
     })
 }
 
-/// Decoded HELLO parameters. Zero / empty means "not present on the wire"
-/// for every field except `codec_id`, which is required.
+/// Decoded HELLO parameters. Zero / empty means "not present on the wire".
+/// A HELLO must carry a codec id, a codec name, or both.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HelloInfo {
-    /// ffmpeg `AVCodecID` value
+    /// ffmpeg `AVCodecID` value, in zmc's FFmpeg numbering
     pub codec_id: u32,
+    /// FFmpeg codec name; empty from a zmc that predates the tag
+    pub codec_name: String,
     /// Raw `codecpar->extradata`: SPS/PPS/VPS for H.26x (Annex B or
     /// avcC/hvcC), AudioSpecificConfig for AAC.
     pub extradata: Vec<u8>,
@@ -384,6 +389,7 @@ pub fn parse_hello(data: &[u8]) -> Result<HelloInfo, ProtocolError> {
                 }
             }
             TLV_EXTRADATA => info.extradata = value.to_vec(),
+            TLV_CODEC_NAME => info.codec_name = String::from_utf8_lossy(value).into_owned(),
             TLV_WIDTH => info.width = u32_value().unwrap_or(0),
             TLV_HEIGHT => info.height = u32_value().unwrap_or(0),
             TLV_FPS_NUM => info.fps_num = u32_value().unwrap_or(0),
@@ -395,7 +401,7 @@ pub fn parse_hello(data: &[u8]) -> Result<HelloInfo, ProtocolError> {
             _ => {} // unknown tag: skip
         }
     }
-    if !saw_codec_id {
+    if !saw_codec_id && info.codec_name.is_empty() {
         return Err(ProtocolError::MissingCodecId);
     }
     Ok(info)
@@ -515,6 +521,26 @@ pub fn video_codec_from_id(codec_id: u32) -> VideoCodec {
         x if x == AVCodecID::AV_CODEC_ID_H264 as u32 => VideoCodec::H264,
         x if x == AVCodecID::AV_CODEC_ID_HEVC as u32 => VideoCodec::H265,
         _ => VideoCodec::Unknown,
+    }
+}
+
+/// Map the FFmpeg codec name from a video HELLO to the pipeline's codec enum.
+pub fn video_codec_from_name(name: &str) -> VideoCodec {
+    match name {
+        "h264" => VideoCodec::H264,
+        "hevc" => VideoCodec::H265,
+        _ => VideoCodec::Unknown,
+    }
+}
+
+/// Map the FFmpeg codec name from an audio HELLO to the pipeline's codec enum.
+pub fn audio_codec_from_name(name: &str) -> AudioCodec {
+    match name {
+        "aac" => AudioCodec::Aac,
+        "pcm_alaw" => AudioCodec::G711Alaw,
+        "pcm_mulaw" => AudioCodec::G711Ulaw,
+        "opus" => AudioCodec::Opus,
+        _ => AudioCodec::Unknown,
     }
 }
 
@@ -734,6 +760,34 @@ mod tests {
         );
         // Empty payload.
         assert_eq!(parse_hello(&[]), Err(ProtocolError::MissingCodecId));
+    }
+
+    #[test]
+    fn hello_carries_the_codec_name() {
+        // zmc sends the FFmpeg codec name (tag 0x0B) beside the numeric id.
+        let mut payload = tlv_u32(0x01, u32::MAX - 1);
+        payload.extend_from_slice(&tlv(0x0B, b"hevc"));
+        let info = parse_hello(&payload).unwrap();
+        assert_eq!(info.codec_name, "hevc");
+        assert_eq!(info.codec_id, u32::MAX - 1);
+
+        // A name alone is enough; an older zmc sends only the id.
+        let info = parse_hello(&tlv(0x0B, b"pcm_mulaw")).unwrap();
+        assert_eq!(info.codec_name, "pcm_mulaw");
+        let info = parse_hello(&tlv_u32(0x01, h264_codec_id())).unwrap();
+        assert_eq!(info.codec_name, "");
+    }
+
+    #[test]
+    fn codec_name_mapping() {
+        assert_eq!(video_codec_from_name("h264"), VideoCodec::H264);
+        assert_eq!(video_codec_from_name("hevc"), VideoCodec::H265);
+        assert_eq!(video_codec_from_name("mjpeg"), VideoCodec::Unknown);
+        assert_eq!(audio_codec_from_name("aac"), AudioCodec::Aac);
+        assert_eq!(audio_codec_from_name("pcm_alaw"), AudioCodec::G711Alaw);
+        assert_eq!(audio_codec_from_name("pcm_mulaw"), AudioCodec::G711Ulaw);
+        assert_eq!(audio_codec_from_name("opus"), AudioCodec::Opus);
+        assert_eq!(audio_codec_from_name("mp3"), AudioCodec::Unknown);
     }
 
     #[test]
