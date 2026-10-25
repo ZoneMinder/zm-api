@@ -94,11 +94,13 @@ fn default_database_name() -> String {
     "zm".to_string()
 }
 
-/// Where MariaDB and MySQL put their socket: Debian/Ubuntu (and the /var/run
-/// symlink to it), the Red Hat family, and the upstream tarball default.
+/// Where MariaDB and MySQL put their socket: Debian/Ubuntu and Arch (and the
+/// /var/run symlink to it), openSUSE, the Red Hat family, and the upstream
+/// tarball default.
 const DEFAULT_SOCKETS: &[&str] = &[
     "/run/mysqld/mysqld.sock",
     "/var/run/mysqld/mysqld.sock",
+    "/run/mysql/mysql.sock",
     "/var/lib/mysql/mysql.sock",
     "/tmp/mysql.sock",
 ];
@@ -357,6 +359,11 @@ mod tests {
         assert_eq!(
             resolve_socket("localhost", None, only_redhat).as_deref(),
             Some("/var/lib/mysql/mysql.sock")
+        );
+        let only_suse = |p: &str| p == "/run/mysql/mysql.sock";
+        assert_eq!(
+            resolve_socket("localhost", None, only_suse).as_deref(),
+            Some("/run/mysql/mysql.sock")
         );
         let both = |p: &str| p == "/run/mysqld/mysqld.sock" || p == "/var/lib/mysql/mysql.sock";
         assert_eq!(

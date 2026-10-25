@@ -21,7 +21,7 @@ done
 
 # With no zm.conf the database settings come from zm-api.env.
 cat >>/etc/zm-api/zm-api.env <<ENV
-APP_DB__HOST=127.0.0.1
+APP_DB__HOST=localhost
 APP_DB__USERNAME=zmuser
 APP_DB__PASSWORD=zmpass
 APP_DB__DATABASE_NAME=zm
