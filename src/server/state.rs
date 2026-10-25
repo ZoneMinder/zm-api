@@ -118,75 +118,12 @@ impl AppState {
             SearchService::new(http.clone(), db.clone(), config.search.clone()).await,
         ));
 
-        // Initialize HLS session manager (Phase 3)
-        let hls_session_manager = if config.streaming.hls.enabled {
-            tracing::info!("HLS streaming enabled, initializing session manager");
-            let manager = Arc::new(HlsSessionManager::new(
-                config.streaming.hls.clone(),
-                &crate::configure::server::public_path("/api/v3/live"),
-            ));
-            // Start the background segment-cleanup loop (previously never
-            // started — its handle was dropped on the floor). See §3.1.
-            manager.start_cleanup_task();
-            Some(manager)
-        } else {
-            tracing::info!("HLS streaming disabled in configuration");
-            None
-        };
-
-        // Initialize source router and live coordinator
-        let (source_router, live_coordinator) = if config.streaming.enabled {
-            tracing::info!("Live streaming enabled, initializing source router and coordinator");
-            let mut router =
-                SourceRouter::from_zoneminder_config(config.streaming.zoneminder.clone());
-
-            // zm-next event ingest: the router forwards decoded monitor EVENTs
-            // to a bounded channel drained by a background ingest task that
-            // writes Events/Frames rows. Only wired when zm-next is enabled.
-            if config.zmnext.enabled {
-                let (event_tx, event_rx) =
-                    tokio::sync::mpsc::channel(config.zmnext.ingest.channel_capacity);
-                router.set_event_sink(event_tx);
-                let ingestor = crate::service::zmnext::EventIngestor::new(
-                    db.clone(),
-                    config.zmnext.ingest.clone(),
-                    config.synopsis.clone(),
-                    search_service.clone(),
-                );
-                tokio::spawn(ingestor.run(event_rx));
-                tracing::info!("zm-next event ingest enabled");
-            }
-
-            let router = Arc::new(router);
-
-            // Keep configured monitors' readers hot so the first viewer skips
-            // cold spin-up (pre-populated keyframe cache → instant codec + a
-            // ready keyframe). No-op when the list is empty.
-            router.spawn_prewarm_task(
-                config.streaming.source.prewarm_monitors.clone(),
-                Duration::from_secs(config.streaming.source.prewarm_interval_seconds),
-            );
-
-            let coordinator = Arc::new(LiveStreamCoordinator::new(
-                Arc::clone(&router),
-                hls_session_manager.clone(),
-            ));
-            // Reap HLS sessions abandoned by viewers who navigated away, so the
-            // socket reader + segmenter don't run forever (§3.2). Disabled when
-            // idle_timeout_seconds is 0.
-            if let Some(hls) = &hls_session_manager {
-                coordinator.start_idle_watchdog(hls.idle_timeout(), Duration::from_secs(15));
-            }
-            (Some(router), Some(coordinator))
-        } else {
-            tracing::info!("Live streaming disabled in configuration");
-            (None, None)
-        };
-
-        // Initialize snapshot service (reuses source router)
-        let snapshot_service = source_router
-            .as_ref()
-            .map(|r| Arc::new(SnapshotService::with_defaults(Arc::clone(r))));
+        let LiveServices {
+            hls_session_manager,
+            source_router,
+            live_coordinator,
+            snapshot_service,
+        } = live_services(&config, &db, &search_service);
 
         // Initialize the motion-synopsis service. Always constructed (it only
         // needs the db + config) so the endpoints can report a clear "disabled"
@@ -410,6 +347,16 @@ impl AppState {
         }
     }
 
+    /// Turn on live view the way [`AppState::new`] does, from this state's
+    /// `config.streaming` (for tests that run against a fake zmc).
+    pub fn enable_live_streaming(&mut self) {
+        let live = live_services(&self.config, &self.db, &self.search_service);
+        self.hls_session_manager = live.hls_session_manager;
+        self.source_router = live.source_router;
+        self.live_coordinator = live.live_coordinator;
+        self.snapshot_service = live.snapshot_service;
+    }
+
     /// Returns a reference to the PTZ manager
     pub fn ptz_manager(&self) -> &PtzManager {
         &self.ptz_manager
@@ -489,4 +436,98 @@ fn join_onvif_url(base: &str, path: &str) -> String {
         base.trim_end_matches('/'),
         path.trim_start_matches('/')
     )
+}
+
+/// The live view services: HLS sessions, the stream-socket router, the
+/// coordinator that ties them together, and snapshots from the router.
+pub struct LiveServices {
+    pub hls_session_manager: Option<Arc<HlsSessionManager>>,
+    pub source_router: Option<Arc<SourceRouter>>,
+    pub live_coordinator: Option<Arc<LiveStreamCoordinator>>,
+    pub snapshot_service: Option<Arc<SnapshotService>>,
+}
+
+/// Build the live view services from `config.streaming`, as
+/// [`AppState::new`] does. Each is `None` when its part of streaming is
+/// disabled. Spawns their background tasks, so call it inside a runtime.
+pub fn live_services(
+    config: &configure::AppConfig,
+    db: &Arc<DatabaseConnection>,
+    search_service: &Option<Arc<SearchService>>,
+) -> LiveServices {
+    // Initialize HLS session manager (Phase 3)
+    let hls_session_manager = if config.streaming.hls.enabled {
+        tracing::info!("HLS streaming enabled, initializing session manager");
+        let manager = Arc::new(HlsSessionManager::new(
+            config.streaming.hls.clone(),
+            &crate::configure::server::public_path("/api/v3/live"),
+        ));
+        // Start the background segment-cleanup loop (previously never
+        // started — its handle was dropped on the floor). See §3.1.
+        manager.start_cleanup_task();
+        Some(manager)
+    } else {
+        tracing::info!("HLS streaming disabled in configuration");
+        None
+    };
+
+    // Initialize source router and live coordinator
+    let (source_router, live_coordinator) = if config.streaming.enabled {
+        tracing::info!("Live streaming enabled, initializing source router and coordinator");
+        let mut router = SourceRouter::from_zoneminder_config(config.streaming.zoneminder.clone());
+
+        // zm-next event ingest: the router forwards decoded monitor EVENTs
+        // to a bounded channel drained by a background ingest task that
+        // writes Events/Frames rows. Only wired when zm-next is enabled.
+        if config.zmnext.enabled {
+            let (event_tx, event_rx) =
+                tokio::sync::mpsc::channel(config.zmnext.ingest.channel_capacity);
+            router.set_event_sink(event_tx);
+            let ingestor = crate::service::zmnext::EventIngestor::new(
+                db.clone(),
+                config.zmnext.ingest.clone(),
+                config.synopsis.clone(),
+                search_service.clone(),
+            );
+            tokio::spawn(ingestor.run(event_rx));
+            tracing::info!("zm-next event ingest enabled");
+        }
+
+        let router = Arc::new(router);
+
+        // Keep configured monitors' readers hot so the first viewer skips
+        // cold spin-up (pre-populated keyframe cache → instant codec + a
+        // ready keyframe). No-op when the list is empty.
+        router.spawn_prewarm_task(
+            config.streaming.source.prewarm_monitors.clone(),
+            Duration::from_secs(config.streaming.source.prewarm_interval_seconds),
+        );
+
+        let coordinator = Arc::new(LiveStreamCoordinator::new(
+            Arc::clone(&router),
+            hls_session_manager.clone(),
+        ));
+        // Reap HLS sessions abandoned by viewers who navigated away, so the
+        // socket reader + segmenter don't run forever (§3.2). Disabled when
+        // idle_timeout_seconds is 0.
+        if let Some(hls) = &hls_session_manager {
+            coordinator.start_idle_watchdog(hls.idle_timeout(), Duration::from_secs(15));
+        }
+        (Some(router), Some(coordinator))
+    } else {
+        tracing::info!("Live streaming disabled in configuration");
+        (None, None)
+    };
+
+    // Initialize snapshot service (reuses source router)
+    let snapshot_service = source_router
+        .as_ref()
+        .map(|r| Arc::new(SnapshotService::with_defaults(Arc::clone(r))));
+
+    LiveServices {
+        hls_session_manager,
+        source_router,
+        live_coordinator,
+        snapshot_service,
+    }
 }
