@@ -623,8 +623,9 @@ impl MonitorShm {
 
         let td = self.trigger_data_mut();
 
-        // Set trigger state to ON
-        td.trigger_state = TriggerState::On as u32;
+        // Score, cause and texts before the state: the analysis thread reads
+        // them once it sees TRIGGER_ON (ZoneMinder's Monitor::ForceAlarmOn
+        // writes in this order for the same reason).
         td.trigger_score = score;
 
         // Copy cause string
@@ -638,6 +639,11 @@ impl MonitorShm {
         // Copy showtext string
         td.trigger_showtext.fill(0);
         td.trigger_showtext[..showtext.len()].copy_from_slice(showtext.as_bytes());
+
+        // Set trigger state to ON, after the writes above (a release fence:
+        // neither the compiler nor the CPU moves them past it)
+        std::sync::atomic::fence(std::sync::atomic::Ordering::Release);
+        td.trigger_state = TriggerState::On as u32;
 
         // Ensure changes are flushed to shared memory
         self.mmap.flush()?;
