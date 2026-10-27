@@ -423,18 +423,21 @@ pub fn create_router_app(state: AppState) -> Router {
     let protect =
         |router: Router<AppState>, feature| authz::protect(router, feature, state.clone());
 
-    let monitors_routes = protect(
-        monitors::add_monitor_routes(Router::new()),
-        Feature::Monitors,
-    );
+    // Monitors routes: where the path names a monitor, its row decides rather
+    // than the base level, as in ZoneMinder (#244). See `monitor_row_gate`.
+    let monitor_gate = |router: Router<AppState>| {
+        router.route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::service::monitor_acl::monitor_row_gate,
+        ))
+    };
+    let monitors_routes = monitor_gate(monitors::add_monitor_routes(Router::new()));
     let monitor_preset_routes = protect(
         monitor_presets::add_monitor_preset_routes(Router::new()),
         Feature::Monitors,
     );
-    let monitor_status_routes = protect(
-        monitor_status::add_monitor_status_routes(Router::new()),
-        Feature::Monitors,
-    );
+    let monitor_status_routes =
+        monitor_gate(monitor_status::add_monitor_status_routes(Router::new()));
     // Permission CRUD is administrative: a Groups:Edit / Monitors:Edit user
     // would otherwise be able to grant themselves or others elevated row-level
     // access via this endpoint. Require System (admin-tier) instead.
@@ -442,7 +445,12 @@ pub fn create_router_app(state: AppState) -> Router {
         monitors_permissions::add_monitor_permission_routes(Router::new()),
         Feature::System,
     );
-    let zone_routes = protect(zones::add_zone_routes(Router::new()), Feature::Monitors);
+    let zone_routes = monitor_gate(zones::add_monitor_zone_routes(Router::new())).merge(
+        zones::add_zone_routes(Router::new()).route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::service::monitor_acl::zone_row_gate,
+        )),
+    );
     let zone_preset_routes = protect(
         zone_presets::add_zone_preset_routes(Router::new()),
         Feature::Monitors,
@@ -577,17 +585,10 @@ pub fn create_router_app(state: AppState) -> Router {
         settings_tables::add_settings_table_routes(Router::new()),
         Feature::System,
     );
-    // MonitorActions: editing is the monitor's (row-level guarded); running a
+    // MonitorActions: editing is the monitor's (row-level gated); running a
     // Manual action needs only Control view, checked on both monitors inside.
-    let monitor_action_routes = protect(
-        monitor_actions::add_monitor_action_routes(Router::new()).route_layer(
-            axum::middleware::from_fn_with_state(
-                state.clone(),
-                crate::service::monitor_acl::monitor_path_guard,
-            ),
-        ),
-        Feature::Monitors,
-    );
+    let monitor_action_routes =
+        monitor_gate(monitor_actions::add_monitor_action_routes(Router::new()));
     let monitor_action_run_route = authz::protect_at(
         monitor_actions::add_monitor_action_run_route(Router::new()),
         Feature::Control,

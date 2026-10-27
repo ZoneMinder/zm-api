@@ -384,6 +384,10 @@ impl FromRequestParts<AppState> for MonitorScope {
         {
             return Ok(grant.scope());
         }
+        // Already resolved by `monitor_row_gate` for this request.
+        if let Some(scope) = parts.extensions.get::<MonitorScope>() {
+            return Ok(scope.clone());
+        }
         resolve_from_request(state, &parts.headers, &parts.uri).await
     }
 }
@@ -418,6 +422,108 @@ pub async fn monitor_stream_guard(
     next: Next,
 ) -> Result<Response, AppError> {
     guard_path_monitor(&state, &params, request, next, Level::View).await
+}
+
+/// The feature gate for `Monitors` routes, in place of `authz::protect`.
+///
+/// ZoneMinder's `canView('Monitors', $mid)` and `canEdit('Monitors', $mid)`
+/// are the monitor's own rows alone (`visibleMonitor` / `editableMonitor`);
+/// the base `Monitors` level only decides where no row does (#244). So when
+/// the path names a monitor (`{id}` or `{monitor_id}`), that monitor's level
+/// in the caller's [`MonitorScope`] decides: 404 if they can't see it, 403 if
+/// they can see it but the method needs Edit. A route that isn't about one
+/// monitor (the list, adding a monitor) is checked against the base level.
+///
+/// Apply with `Router::route_layer` so the path params are there.
+pub async fn monitor_row_gate(
+    State(state): State<AppState>,
+    params: RawPathParams,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    let mid = path_monitor_id(&params);
+    gate_monitor(&state, mid, request, next).await
+}
+
+/// [`monitor_row_gate`] for `/zones/{id}`: a zone belongs to its monitor, so
+/// the monitor's level decides, as `canEdit('Monitors', $mid)` does for
+/// zones in ZoneMinder. An unknown zone falls back to the base level.
+pub async fn zone_row_gate(
+    State(state): State<AppState>,
+    params: RawPathParams,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    let mut mid = None;
+    if let Some(zone_id) = path_monitor_id(&params) {
+        mid = repo::zones::find_by_id(state.db(), zone_id)
+            .await?
+            .map(|zone| zone.monitor_id);
+    }
+    gate_monitor(&state, mid, request, next).await
+}
+
+fn path_monitor_id(params: &RawPathParams) -> Option<u32> {
+    params
+        .iter()
+        .find(|(key, _)| *key == "monitor_id" || *key == "id")
+        .and_then(|(_, value)| value.parse::<u32>().ok())
+}
+
+async fn gate_monitor(
+    state: &AppState,
+    mid: Option<u32>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    use crate::util::authz::{authenticate, required_level, Feature};
+    let required = required_level(Feature::Monitors, request.method());
+
+    // A signed media URL carries its own one-monitor, read-only scope.
+    if let Some(grant) = request
+        .extensions()
+        .get::<crate::service::media_grant::MediaGrant>()
+    {
+        if let Some(mid) = mid {
+            check_monitor(&grant.scope(), mid, required)?;
+        }
+        return Ok(next.run(request).await);
+    }
+
+    let claims = authenticate(state, &request)?;
+    match mid {
+        Some(mid) => {
+            let scope = resolve(state.db(), claims.uid, claims.perms.monitors).await?;
+            check_monitor(&scope, mid, required)?;
+            // The handler's `MonitorScope` extractor reuses it.
+            request.extensions_mut().insert(scope);
+        }
+        None if claims.perms.monitors < required => {
+            return Err(AppError::PermissionDeniedError(format!(
+                "{required:?} access to Monitors required"
+            )));
+        }
+        None => {}
+    }
+    request.extensions_mut().insert(claims);
+    Ok(next.run(request).await)
+}
+
+/// 404 for a monitor the caller can't see, 403 for one they see but may not
+/// change.
+fn check_monitor(scope: &MonitorScope, mid: u32, required: Level) -> AppResult<()> {
+    if !scope.allows(mid, Level::View) {
+        return Err(AppError::NotFoundError(Resource {
+            details: vec![("monitor_id".to_string(), mid.to_string())],
+            resource_type: ResourceType::Monitor,
+        }));
+    }
+    if !scope.allows(mid, required) {
+        return Err(AppError::PermissionDeniedError(format!(
+            "{required:?} access to monitor {mid} required"
+        )));
+    }
+    Ok(())
 }
 
 async fn guard_path_monitor(

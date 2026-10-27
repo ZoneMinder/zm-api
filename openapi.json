@@ -10441,6 +10441,16 @@
               }
             }
           },
+          "403": {
+            "description": "Needs Monitors Edit, and Edit on this monitor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Monitor not found",
             "content": {

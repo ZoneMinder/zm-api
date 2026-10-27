@@ -72,8 +72,14 @@ fn ci() -> axum::extract::ConnectInfo<std::net::SocketAddr> {
     axum::extract::ConnectInfo(std::net::SocketAddr::from(([127, 0, 0, 1], 50000)))
 }
 
+/// The mock answers one query with no rows. On a route about one monitor
+/// the gate looks up the caller's permission rows first, since a row can
+/// grant what the base level doesn't (#244); finding none, the base level
+/// (None) refuses.
 fn router() -> axum::Router {
-    let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
+    let db = MockDatabase::new(DatabaseBackend::MySql)
+        .append_query_results([Vec::<sea_orm::MockRow>::new()])
+        .into_connection();
     let state = zm_api::server::state::AppState::for_test_with_db(db);
     common::schema::checked(zm_api::routes::create_router_app(state))
 }

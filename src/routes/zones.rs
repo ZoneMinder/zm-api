@@ -3,16 +3,23 @@ use crate::server::state::AppState;
 use crate::util::middleware::auth_middleware;
 use axum::{middleware, routing::get, Router};
 
-pub fn add_zone_routes(router: Router<AppState>) -> Router<AppState> {
-    let api_prefix = "/api/v3";
-
+/// Zones listed and added under their monitor: `{id}` is the monitor's.
+pub fn add_monitor_zone_routes(router: Router<AppState>) -> Router<AppState> {
     let protected = Router::new()
         .route(
-            &format!("{}/monitors/{{id}}/zones", api_prefix),
+            "/api/v3/monitors/{id}/zones",
             get(zones::list_by_monitor).post(zones::create),
         )
+        .layer(middleware::from_fn(auth_middleware));
+
+    router.merge(protected)
+}
+
+/// One zone by its own id.
+pub fn add_zone_routes(router: Router<AppState>) -> Router<AppState> {
+    let protected = Router::new()
         .route(
-            &format!("{}/zones/{{id}}", api_prefix),
+            "/api/v3/zones/{id}",
             get(zones::get).put(zones::update).delete(zones::delete),
         )
         .layer(middleware::from_fn(auth_middleware));

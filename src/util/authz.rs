@@ -270,7 +270,7 @@ pub enum Feature {
 /// safe (read) methods need `View`, mutating methods need `Edit`.
 ///
 /// `Stream` has no `Edit` level in ZoneMinder, so it always requires `View`.
-fn required_level(feature: Feature, method: &Method) -> Level {
+pub(crate) fn required_level(feature: Feature, method: &Method) -> Level {
     if feature == Feature::Stream {
         return Level::View;
     }
@@ -278,6 +278,27 @@ fn required_level(feature: Feature, method: &Method) -> Level {
         Method::GET | Method::HEAD | Method::OPTIONS => Level::View,
         _ => Level::Edit,
     }
+}
+
+/// The caller's claims from the bearer token (header, or `?token=` for media
+/// elements), refused if the token is missing, invalid or revoked.
+/// Self-contained, so it doesn't depend on auth middleware ordering.
+pub(crate) fn authenticate(state: &AppState, request: &Request) -> Result<UserClaims, AppError> {
+    let token = extract_token_from_header(request)
+        .or_else(|| extract_token_from_query(request))
+        .ok_or_else(|| AppError::UnauthorizedError("Authentication required".to_string()))?;
+
+    let claims = UserClaims::decode_access(&token)
+        .map_err(|_| AppError::UnauthorizedError("Invalid token".to_string()))?;
+
+    // Server-side revocation floor (logout, password change, user disable):
+    // an in-memory check, so the media hot path stays free of DB round-trips.
+    if state.revocations.is_revoked(claims.uid, claims.iat) {
+        return Err(AppError::UnauthorizedError(
+            "Token has been revoked".to_string(),
+        ));
+    }
+    Ok(claims)
 }
 
 async fn enforce(
@@ -297,23 +318,7 @@ async fn enforce(
         return Ok(next.run(request).await);
     }
 
-    // Self-contained: decode the bearer token (header or `?token=` for media
-    // elements) rather than relying on auth middleware ordering.
-    let token = extract_token_from_header(&request)
-        .or_else(|| extract_token_from_query(&request))
-        .ok_or_else(|| AppError::UnauthorizedError("Authentication required".to_string()))?;
-
-    let claims = UserClaims::decode_access(&token)
-        .map_err(|_| AppError::UnauthorizedError("Invalid token".to_string()))?;
-
-    // Server-side revocation floor (logout, password change, user disable):
-    // an in-memory check, so the media hot path stays free of DB round-trips.
-    if state.revocations.is_revoked(claims.uid, claims.iat) {
-        return Err(AppError::UnauthorizedError(
-            "Token has been revoked".to_string(),
-        ));
-    }
-
+    let claims = authenticate(&state, &request)?;
     let required = level.unwrap_or_else(|| required_level(feature, request.method()));
     let granted = claims.perms.level(feature);
 
