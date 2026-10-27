@@ -32458,7 +32458,7 @@
               "null"
             ],
             "format": "double",
-            "description": "Pan position"
+            "description": "Pan position. Through ZoneMinder's control daemon (a control with no\nnative implementation) absolute moves answer 400: no ZoneMinder\ncontrol module takes a position that way."
           },
           "tilt": {
             "type": [
@@ -32782,7 +32782,7 @@
               "null"
             ],
             "format": "double",
-            "description": "Pan delta"
+            "description": "Pan delta, positive right. Through ZoneMinder's control daemon it is a\nwhole step in the control's pan step range, sent as `moveRel<Dir>`\nwith `panstep`; with native ONVIF, a normalized translation."
           },
           "tilt_delta": {
             "type": [
@@ -32790,7 +32790,7 @@
               "null"
             ],
             "format": "double",
-            "description": "Tilt delta"
+            "description": "Tilt delta, positive up, in the same units as `pan_delta`."
           },
           "zoom_delta": {
             "type": [
@@ -32798,7 +32798,7 @@
               "null"
             ],
             "format": "double",
-            "description": "Zoom delta"
+            "description": "Zoom delta, positive in (tele). Through ZoneMinder's control daemon,\n`zoomRelTele` / `zoomRelWide` with `step`, sent after any pan or tilt."
           }
         }
       },

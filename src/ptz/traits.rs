@@ -248,8 +248,11 @@ impl PtzCommand {
             Self::SetPreset { .. } => "presetSet",
             Self::ClearPreset { .. } => "presetClear",
             Self::GotoHome => "presetHome",
-            Self::MoveAbsolute(_) => "moveAbsPan", // Simplified - actual impl needs multiple calls
-            Self::MoveRelative(_) => "moveRelPan", // Simplified
+            // The Perl bridge doesn't send these names: it splits a relative
+            // move into `moveRel<Dir>` / `zoomRel*` calls and refuses an
+            // absolute one (#248).
+            Self::MoveAbsolute(_) => "moveAbs",
+            Self::MoveRelative(_) => "moveRel",
             Self::Wake => "wake",
             Self::Sleep => "sleep",
             Self::Reset => "reset",
