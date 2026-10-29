@@ -3675,6 +3675,18 @@
               "type": "integer",
               "format": "int64"
             }
+          },
+          {
+            "name": "archived",
+            "in": "query",
+            "description": "`false` leaves archived events out, `true` counts only them; absent\ncounts both. ZoneMinder's `consoleEvents/<interval>/Archived=:0`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {

@@ -5,6 +5,14 @@ use utoipa::ToSchema;
 use crate::dto::wrappers::{DateTimeWrapper, DecimalWrapper};
 use crate::entity::sea_orm_active_enums::Orientation;
 
+/// Query for `GET /events/counts-by-monitor/{hours}`.
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+pub struct EventCountsByMonitorQuery {
+    /// `false` leaves archived events out, `true` counts only them; absent
+    /// counts both. ZoneMinder's `consoleEvents/<interval>/Archived=:0`.
+    pub archived: Option<bool>,
+}
+
 /// Field to sort events by
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, ToSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
