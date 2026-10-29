@@ -78,11 +78,16 @@ EOF
         opensuse-*) install="zypper --non-interactive install" ;;
         *)          install="dnf -y install" ;;
       esac
+      # openSUSE: pkgconfig(openssl) can resolve to LibreSSL; see the spec.
+      case "$distro" in
+        opensuse-*) openssl_dev=libopenssl-devel ;;
+        *)          openssl_dev="'pkgconfig(openssl)'" ;;
+      esac
       cat <<EOF
 RUN ${install} \\
       git tar gzip rpm-build rust cargo gcc systemd-rpm-macros \\
       clang clang-devel \\
-      'pkgconfig(openssl)' \\
+      ${openssl_dev} \\
       'pkgconfig(libavcodec)' 'pkgconfig(libavformat)' \\
       'pkgconfig(libavutil)' 'pkgconfig(libavfilter)' \\
       'pkgconfig(libavdevice)' 'pkgconfig(libswscale)' \\
