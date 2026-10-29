@@ -161,6 +161,77 @@ async fn live_hls_plays() {
     assert_eq!(r.status(), StatusCode::NO_CONTENT, "{}", r.text());
 }
 
+/// Ending a monitor's HLS session (the idle reaper does this 90 s after the
+/// last playlist fetch) leaves the stream-socket reader running while
+/// something else still reads from it, such as a WebRTC viewer (#256).
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn ending_hls_keeps_a_reader_others_still_use() {
+    let app_db = TestApp::spawn().await;
+    let m = insert_monitor(&app_db.db, "LiveReap")
+        .await
+        .expect("monitor");
+    let _m = RowGuard::monitor(m.id);
+    let zmc = FakeZmc::start(m.id);
+    let mut live = None;
+    let app = TestApp::spawn_live_with(zmc.socks_dir(), |state| {
+        live = Some((
+            state.live_coordinator.clone().expect("coordinator"),
+            state.source_router.clone().expect("router"),
+        ));
+    })
+    .await;
+    let (coordinator, router) = live.unwrap();
+    let token = superuser_token();
+
+    let r = app
+        .post_json(
+            &format!("/api/v3/live/{}/start", m.id),
+            &token,
+            &json!({ "enable_hls": true }),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::OK, "{}", r.text());
+
+    // A second reader of the same source, as a WebRTC peer is.
+    let source = router.get_existing_source(m.id).expect("source");
+    let mut viewer = source.subscribe_video();
+    tokio::time::timeout(Duration::from_secs(10), viewer.recv())
+        .await
+        .expect("video before the reap")
+        .expect("open channel");
+
+    coordinator.stop_session(m.id).await.expect("stop HLS");
+
+    // Skip what was sent before the stop; new frames must keep coming.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    viewer = viewer.resubscribe();
+    tokio::time::timeout(Duration::from_secs(3), viewer.recv())
+        .await
+        .expect("the reader stopped under a viewer")
+        .expect("open channel");
+
+    // When that viewer leaves, the watchdog's next pass stops the reader.
+    drop(viewer);
+    coordinator.stop_unread_kept_readers().await;
+    assert!(!source.is_active().await, "kept reader left running unread");
+
+    // With nobody left, stopping a session does stop the reader.
+    let r = app
+        .post_json(
+            &format!("/api/v3/live/{}/start", m.id),
+            &token,
+            &json!({ "enable_hls": true }),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::OK, "{}", r.text());
+    coordinator.stop_session(m.id).await.expect("stop HLS");
+    assert!(
+        !source.is_active().await,
+        "reader left running with no one reading"
+    );
+}
+
 /// The video size of `path` and how many frames decode from it.
 fn decode(path: &std::path::Path) -> (u32, u32, usize) {
     ffmpeg_next::init().unwrap();
