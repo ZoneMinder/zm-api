@@ -114,7 +114,12 @@ impl ZmConfig {
         // Parse KEY=VALUE
         if let Some((key, value)) = line.split_once('=') {
             let key = key.trim().to_string();
-            let value = value.trim().to_string();
+            // Quotes around a value aren't part of it: ZoneMinder's C++, Perl
+            // and PHP readers all strip them (#192).
+            let value = value
+                .trim()
+                .trim_matches(|c| c == '"' || c == '\'')
+                .to_string();
 
             if !key.is_empty() {
                 if let Some(file) = &self.current {
@@ -277,6 +282,21 @@ ZM_DB_PASS=zmpass
         assert_eq!(config.db_user(), Some("zmuser"));
         assert_eq!(config.db_pass(), Some("zmpass"));
         assert_eq!(config.db_port(), None);
+    }
+
+    #[test]
+    fn quotes_around_a_value_are_not_part_of_it() {
+        let tmp = TempDir::new().unwrap();
+        create_test_config(
+            tmp.path(),
+            "zm.conf",
+            "ZM_PATH_FFMPEG=\"/usr/bin/ffmpeg\"\nZM_DB_PASS='zm pass'\nZM_DB_USER= \"zmuser\" \nZM_DB_NAME=zm\n",
+        );
+        let config = ZmConfig::load_from_path(tmp.path().to_str().unwrap());
+        assert_eq!(config.get("ZM_PATH_FFMPEG"), Some("/usr/bin/ffmpeg"));
+        assert_eq!(config.db_pass(), Some("zm pass"));
+        assert_eq!(config.db_user(), Some("zmuser"));
+        assert_eq!(config.db_name(), Some("zm"));
     }
 
     #[test]

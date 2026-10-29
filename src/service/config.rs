@@ -11,6 +11,20 @@ fn to_response(m: &crate::entity::config::Model) -> ConfigResponse {
     to_response_with(m, &crate::configure::zmconf::ZmConfig::load())
 }
 
+/// A value from a conf file as the Config table would hold it: a boolean
+/// may be written yes/no, true/false or on/off there. ZoneMinder's
+/// `configFileValue()` maps the same words.
+fn file_value(v: &str, r#type: &str) -> String {
+    if r#type == "boolean" {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "yes" | "true" | "on" => return "1".to_string(),
+            "no" | "false" | "off" => return "0".to_string(),
+            _ => {}
+        }
+    }
+    v.to_string()
+}
+
 fn to_response_with(
     m: &crate::entity::config::Model,
     files: &crate::configure::zmconf::ZmConfig,
@@ -25,7 +39,7 @@ fn to_response_with(
         // A secret set in a file never leaves the server, as ZoneMinder's
         // Options page shows it.
         Some((path, _)) if m.private != 0 => (String::new(), "file", Some(path)),
-        Some((path, v)) => (v.to_string(), "file", Some(path)),
+        Some((path, v)) => (file_value(v, &m.r#type), "file", Some(path)),
         None => (m.value.clone(), "db", None),
     };
     ConfigResponse {
@@ -159,6 +173,17 @@ mod tests {
             system: 0,
             requires: None,
         }
+    }
+
+    #[test]
+    fn a_file_set_boolean_reads_as_the_table_would_hold_it() {
+        assert_eq!(file_value("yes", "boolean"), "1");
+        assert_eq!(file_value(" On ", "boolean"), "1");
+        assert_eq!(file_value("FALSE", "boolean"), "0");
+        assert_eq!(file_value("off", "boolean"), "0");
+        assert_eq!(file_value("1", "boolean"), "1");
+        // Only booleans: a string option keeps the word.
+        assert_eq!(file_value("yes", "string"), "yes");
     }
 
     #[tokio::test]
