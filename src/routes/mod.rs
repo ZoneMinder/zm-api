@@ -320,7 +320,11 @@ fn apply_common_middleware(
                     burst,
                     mw.trust_proxy_headers,
                 );
-                Some(GovernorLayer::new(conf))
+                Some(crate::util::rate_limit::ExemptLayer::new(
+                    GovernorLayer::new(conf)
+                        .error_handler(crate::util::rate_limit::too_many_requests),
+                    crate::util::rate_limit::is_live_media_fetch,
+                ))
             }
             None => {
                 tracing::warn!("Invalid rate-limit configuration; global rate limiting disabled");
@@ -410,7 +414,10 @@ pub fn create_router_app(state: AppState) -> Router {
                     mw.auth_rate_limit_burst,
                     mw.trust_proxy_headers,
                 );
-                routes.layer(GovernorLayer::new(conf))
+                routes.layer(
+                    GovernorLayer::new(conf)
+                        .error_handler(crate::util::rate_limit::too_many_requests),
+                )
             }
             None => routes,
         }
