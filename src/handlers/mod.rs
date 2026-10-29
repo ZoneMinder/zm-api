@@ -30,6 +30,7 @@ pub mod server_stats;
 pub mod servers;
 pub mod snapshots;
 pub mod snapshots_events;
+pub mod sounds;
 pub mod states;
 pub mod stats;
 pub mod storage;

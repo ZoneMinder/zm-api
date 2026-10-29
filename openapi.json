@@ -19348,6 +19348,86 @@
         ]
       }
     },
+    "/api/v3/system/sounds/{name}": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "An alarm sound",
+        "description": "- A file from ZoneMinder's sounds directory (`ZM_DIR_SOUNDS`), for the\n  watch page to play on alarm when `ZM_WEB_SOUND_ON_ALARM` is on; the\n  option `ZM_WEB_ALARM_SOUND` names the file.\n- Takes `?token=` as well as the header, so an `<audio>` element can load it.",
+        "operationId": "get_sound",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "File name in the sounds directory, e.g. snap.ogg",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The sound file",
+            "content": {
+              "audio/ogg": {}
+            }
+          },
+          "206": {
+            "description": "The byte range asked for with Range",
+            "content": {
+              "audio/ogg": {}
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Needs Stream View",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such sound",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "jwt": []
+          }
+        ]
+      }
+    },
     "/api/v3/system/startup": {
       "post": {
         "tags": [
