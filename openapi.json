@@ -9036,6 +9036,56 @@
         ]
       }
     },
+    "/api/v3/menu-items/reset": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Reset the menu to a fresh install's",
+        "description": "Deletes every menu item and inserts ZoneMinder's default rows (Console\nthrough Map, Watch included, as `zm_create.sql` seeds them), in one\ntransaction. Returns the new list.",
+        "operationId": "reset_menu_items",
+        "responses": {
+          "200": {
+            "description": "The default menu items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MenuItemResponse"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Needs System Edit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "jwt": []
+          }
+        ]
+      }
+    },
     "/api/v3/menu-items/{id}": {
       "get": {
         "tags": [

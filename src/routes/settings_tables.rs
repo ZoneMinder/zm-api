@@ -25,6 +25,7 @@ pub fn add_settings_table_routes(router: Router<AppState>) -> Router<AppState> {
             "/api/v3/menu-items",
             get(h::list_menu_items).post(h::create_menu_item),
         )
+        .route("/api/v3/menu-items/reset", post(h::reset_menu_items))
         .route(
             "/api/v3/menu-items/{id}",
             get(h::get_menu_item)
