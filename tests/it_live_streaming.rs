@@ -84,6 +84,80 @@ async fn no_snapshot_without_a_stream_socket() {
     );
 }
 
+/// A monitor whose zmc is restarting (no stream socket yet) answers 503
+/// with Retry-After, not the 404 of a monitor that doesn't exist (#206).
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn a_monitor_without_its_socket_is_unavailable_not_missing() {
+    let app_db = TestApp::spawn().await;
+    let m = insert_monitor(&app_db.db, "LiveRestart")
+        .await
+        .expect("monitor");
+    let _m = RowGuard::monitor(m.id);
+    // A zmc for another monitor: this one's socket is gone, as while its
+    // zmc restarts.
+    let zmc = FakeZmc::start(m.id + 1_000_000);
+    let app = TestApp::spawn_live(zmc.socks_dir()).await;
+    let token = superuser_token();
+
+    let snapshot = app
+        .get(&format!("/api/v3/monitors/{}/snapshot", m.id), &token)
+        .await;
+    let start = app
+        .post_json(
+            &format!("/api/v3/live/{}/start", m.id),
+            &token,
+            &json!({ "enable_hls": true }),
+        )
+        .await;
+    for (what, r) in [("snapshot", &snapshot), ("live start", &start)] {
+        assert_eq!(
+            r.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{what}: {}",
+            r.text()
+        );
+        let retry: u64 = r
+            .headers
+            .get("retry-after")
+            .unwrap_or_else(|| panic!("{what}: no retry-after"))
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(retry >= 1, "{what}: retry-after {retry}");
+    }
+
+    // Another server's monitor never has its socket here: 404, not a 503
+    // to retry forever.
+    let other = TestApp::spawn_live_with(zmc.socks_dir(), |state| state.server_id = Some(1)).await;
+    {
+        use sea_orm::{ActiveModelTrait, Set};
+        let mut am: zm_api::entity::monitors::ActiveModel = m.clone().into();
+        am.server_id = Set(Some(2));
+        am.update(&app_db.db).await.unwrap();
+    }
+    let r = other
+        .get(&format!("/api/v3/monitors/{}/snapshot", m.id), &token)
+        .await;
+    assert_eq!(r.status(), StatusCode::NOT_FOUND, "{}", r.text());
+
+    // A monitor that doesn't exist is still a 404.
+    let missing = m.id + 2_000_000;
+    let r = app
+        .get(&format!("/api/v3/monitors/{missing}/snapshot"), &token)
+        .await;
+    assert_eq!(r.status(), StatusCode::NOT_FOUND, "{}", r.text());
+    let r = app
+        .post_json(
+            &format!("/api/v3/live/{missing}/start"),
+            &token,
+            &json!({ "enable_hls": true }),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::NOT_FOUND, "{}", r.text());
+}
+
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
 async fn live_hls_plays() {
