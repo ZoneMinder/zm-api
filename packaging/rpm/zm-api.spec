@@ -43,7 +43,14 @@ BuildRequires:  pkgconfig(libavfilter)
 BuildRequires:  pkgconfig(libavdevice)
 BuildRequires:  pkgconfig(libswscale)
 BuildRequires:  pkgconfig(libswresample)
+# openSUSE has three pkgconfig(openssl) providers (OpenSSL, LibreSSL, AWS-LC)
+# and zypper may pick LibreSSL, which openssl-sys rejects past 4.3. Ask for
+# OpenSSL by name there.
+%if 0%{?suse_version}
+BuildRequires:  libopenssl-devel
+%else
 BuildRequires:  pkgconfig(openssl)
+%endif
 
 # useradd/groupadd: shadow-utils on Fedora/EL, shadow on openSUSE.
 # pgrep, used by zm-api-takeover: procps-ng on Fedora/EL, procps on openSUSE.
