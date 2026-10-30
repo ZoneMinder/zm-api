@@ -7705,6 +7705,16 @@
               }
             }
           },
+          "404": {
+            "description": "Monitor not found, deleted, or not capturing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Session already exists",
             "content": {
@@ -7716,7 +7726,7 @@
             }
           },
           "503": {
-            "description": "Service unavailable",
+            "description": "Live view not configured, or the monitor's capture is starting (see Retry-After)",
             "content": {
               "application/json": {
                 "schema": {
@@ -12274,7 +12284,7 @@
             }
           },
           "404": {
-            "description": "Monitor not found",
+            "description": "Monitor not found, deleted, or not capturing",
             "content": {
               "application/json": {
                 "schema": {
@@ -12284,7 +12294,7 @@
             }
           },
           "503": {
-            "description": "Service unavailable",
+            "description": "Live view not configured, or the monitor's capture is starting (see Retry-After)",
             "content": {
               "application/json": {
                 "schema": {
@@ -21412,6 +21422,24 @@
             "properties": {
               "ServiceUnavailableError": {
                 "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A 503 for something that will be back shortly, with a Retry-After of\nthis many seconds.",
+            "required": [
+              "RetryLaterError"
+            ],
+            "properties": {
+              "RetryLaterError": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                },
+                "description": "A 503 for something that will be back shortly, with a Retry-After of\nthis many seconds.",
+                "maxItems": 2,
+                "minItems": 2
               }
             }
           },

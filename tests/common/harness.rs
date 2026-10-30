@@ -54,6 +54,16 @@ impl TestApp {
     /// reading stream sockets from `socks_dir` (a
     /// [`FakeZmc`](super::fake_zmc::FakeZmc)'s).
     pub async fn spawn_live(socks_dir: &std::path::Path) -> Self {
+        Self::spawn_live_with(socks_dir, |_| {}).await
+    }
+
+    /// [`spawn_live`](Self::spawn_live), then `adjust` on the live state
+    /// (to keep a handle on its coordinator, say).
+    #[allow(dead_code)]
+    pub async fn spawn_live_with(
+        socks_dir: &std::path::Path,
+        adjust: impl FnOnce(&mut AppState),
+    ) -> Self {
         let socks = socks_dir.to_string_lossy().into_owned();
         Self::spawn_with(|state| {
             let mut config = (*state.config).clone();
@@ -65,6 +75,7 @@ impl TestApp {
             config.streaming.zoneminder.socks_path = socks;
             state.config = std::sync::Arc::new(config);
             state.enable_live_streaming();
+            adjust(state);
         })
         .await
     }
