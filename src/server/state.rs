@@ -56,6 +56,11 @@ pub struct AppState {
     /// Live WebRTC session slots, shared by WebSocket signalling and WHEP
     /// (`streaming.webrtc.max_connections`).
     pub webrtc_slots: Arc<crate::streaming::live::slots::WebRtcSlots>,
+    /// This host's server id as ZoneMinder's own daemons and web UI work it
+    /// out (`ZM_SERVER_ID`, else `ZM_SERVER_NAME` or `ZM_SERVER_HOST` looked
+    /// up in `Servers`): which monitors this host's zmdc.pl runs. `None`
+    /// when ZoneMinder has none, and then every monitor is local.
+    pub server_id: Option<u32>,
 }
 
 impl AppState {
@@ -152,7 +157,20 @@ impl AppState {
         // Which Servers row this host is (None = single-server). Used by the
         // stats job and the daemon manager; resolved the way ZoneMinder's
         // own daemons do it, from zm.conf and the Servers table.
-        let server_id = crate::daemon::server_id::resolve_server_id(db.as_ref()).await;
+        let this_server = crate::daemon::server_id::resolve_this_server(db.as_ref()).await;
+        let server_id = this_server.id;
+        // On a multi-server host zmdc.pl listens on zmdc<ZM_SERVER_ID>.sock
+        // (#229). A socket name set in the config is left alone.
+        if config.daemon.socket_name == "zmdc.sock" {
+            config.daemon.socket_name =
+                crate::daemon::server_id::zmdc_socket_name(this_server.zoneminder_id);
+            if this_server.zoneminder_id.is_some() {
+                tracing::info!(
+                    "ZoneMinder's daemon socket is {}",
+                    config.daemon.socket_name
+                );
+            }
+        }
 
         {
             let m = &config.maintenance;
@@ -298,6 +316,7 @@ impl AppState {
             ptz_manager,
             revocations,
             schema_behind,
+            server_id: this_server.zoneminder_id,
             media_job_wake: Arc::new(tokio::sync::Notify::new()),
             event_hub: Default::default(),
             whep: Default::default(),
@@ -344,6 +363,7 @@ impl AppState {
             ptz_manager,
             revocations: std::sync::Arc::new(crate::util::revocation::TokenRevocations::default()),
             schema_behind: None,
+            server_id: None,
             media_job_wake: std::sync::Arc::new(tokio::sync::Notify::new()),
             event_hub: Default::default(),
             whep: Default::default(),

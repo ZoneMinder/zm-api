@@ -75,20 +75,73 @@ fn match_server(host: &str, servers: &[ServerCandidate]) -> Option<u32> {
         .map(|s| s.id)
 }
 
+/// The server id ZoneMinder's own Perl daemons use (`ZoneMinder::Config`):
+/// `ZM_SERVER_ID` when set and not 0, else the `Servers` row whose `Name`
+/// is `ZM_SERVER_NAME`, else the one whose `Name` is `ZM_SERVER_HOST`. No
+/// hostname fallback, unlike [`pick_server_id`]. zmdc.pl names its socket
+/// after this id, so this is what finding that socket needs.
+pub fn zoneminder_server_id(
+    conf_id: Option<&str>,
+    conf_name: Option<&str>,
+    conf_host: Option<&str>,
+    servers: &[ServerCandidate],
+) -> Option<u32> {
+    if let Some(id) = conf_id.and_then(|v| v.trim().parse::<u32>().ok()) {
+        if id != 0 {
+            return Some(id);
+        }
+    }
+    // `WHERE Name=?` under MySQL's case-insensitive collation.
+    let by_name = |name: &str| {
+        let name = name.trim();
+        servers
+            .iter()
+            .find(|s| s.name.eq_ignore_ascii_case(name))
+            .map(|s| s.id)
+    };
+    match (conf_name.filter(|n| !n.trim().is_empty()), conf_host) {
+        (Some(name), _) => by_name(name),
+        (None, Some(host)) if !host.trim().is_empty() => by_name(host),
+        _ => None,
+    }
+}
+
+/// zmdc.pl's socket file name: `zmdc<ZM_SERVER_ID>.sock` on a host with a
+/// server id, `zmdc.sock` otherwise (`scripts/zmdc.pl.in`, `SOCK_FILE`).
+pub fn zmdc_socket_name(zoneminder_id: Option<u32>) -> String {
+    match zoneminder_id {
+        Some(id) => format!("zmdc{id}.sock"),
+        None => "zmdc.sock".to_string(),
+    }
+}
+
+/// Who this host is in `Servers`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ThisServer {
+    /// This host's `Servers.Id` by [`pick_server_id`]; `None` on a
+    /// single-server install or when nothing matches.
+    pub id: Option<u32>,
+    /// The id ZoneMinder's daemons use, which names zmdc.pl's socket.
+    pub zoneminder_id: Option<u32>,
+}
+
 /// Resolve this host's `Servers.Id` from `zm.conf`, the `Servers` table and
 /// the machine hostname. `None` means single-server (or unresolvable, which
 /// is logged so a multi-server operator can see why the gates are open).
 pub async fn resolve_server_id(db: &DatabaseConnection) -> Option<u32> {
+    resolve_this_server(db).await.id
+}
+
+/// [`resolve_server_id`], plus the id ZoneMinder's daemons go by.
+pub async fn resolve_this_server(db: &DatabaseConnection) -> ThisServer {
+    let conf = ZmConfig::load();
     let rows = match servers::Entity::find().all(db).await {
         Ok(rows) => rows,
         Err(e) => {
             warn!("Could not read Servers to resolve this host's server id: {e}");
-            return None;
+            Vec::new()
         }
     };
-    if rows.is_empty() {
-        return None; // single-server install
-    }
     let candidates: Vec<ServerCandidate> = rows
         .into_iter()
         .map(|s| ServerCandidate {
@@ -97,8 +150,19 @@ pub async fn resolve_server_id(db: &DatabaseConnection) -> Option<u32> {
             hostname: s.hostname,
         })
         .collect();
-
-    let conf = ZmConfig::load();
+    let zoneminder_id = zoneminder_server_id(
+        conf.get("ZM_SERVER_ID"),
+        conf.get("ZM_SERVER_NAME"),
+        conf.get("ZM_SERVER_HOST"),
+        &candidates,
+    );
+    if candidates.is_empty() {
+        // Single-server install. zmdc.pl still goes by ZM_SERVER_ID if set.
+        return ThisServer {
+            id: None,
+            zoneminder_id,
+        };
+    }
     let machine = nix::unistd::gethostname()
         .ok()
         .and_then(|h| h.into_string().ok());
@@ -118,7 +182,10 @@ pub async fn resolve_server_id(db: &DatabaseConnection) -> Option<u32> {
             machine
         ),
     }
-    picked
+    ThisServer {
+        id: picked,
+        zoneminder_id,
+    }
 }
 
 #[cfg(test)]
@@ -138,6 +205,39 @@ mod tests {
                 hostname: None,
             },
         ]
+    }
+
+    #[test]
+    fn zoneminders_id_follows_its_perl_rule() {
+        let s = servers();
+        assert_eq!(
+            zoneminder_server_id(Some("7"), Some("nvr-a"), None, &s),
+            Some(7)
+        );
+        assert_eq!(
+            zoneminder_server_id(Some("0"), Some("NVR-B"), None, &s),
+            Some(2)
+        );
+        // ZM_SERVER_NAME is tried before ZM_SERVER_HOST, and only it.
+        assert_eq!(
+            zoneminder_server_id(None, Some("nope"), Some("nvr-a"), &s),
+            None
+        );
+        assert_eq!(zoneminder_server_id(None, None, Some("nvr-a"), &s), Some(1));
+        // Name only: no Hostname or short-label matching, no machine hostname.
+        assert_eq!(
+            zoneminder_server_id(None, None, Some("nvr-a.lan"), &s),
+            None
+        );
+        assert_eq!(zoneminder_server_id(None, None, None, &s), None);
+        // A ZM_SERVER_ID with no Servers rows still names the socket.
+        assert_eq!(zoneminder_server_id(Some("3"), None, None, &[]), Some(3));
+    }
+
+    #[test]
+    fn zmdc_socket_is_named_after_the_server_id() {
+        assert_eq!(zmdc_socket_name(Some(2)), "zmdc2.sock");
+        assert_eq!(zmdc_socket_name(None), "zmdc.sock");
     }
 
     #[test]

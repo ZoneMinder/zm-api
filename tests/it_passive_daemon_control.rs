@@ -102,3 +102,53 @@ async fn daemon_and_system_status_come_from_zmdc() {
     assert_eq!(body["daemons"][0]["pid"], 4321);
     assert!(seen.lock().unwrap().iter().all(|m| m == "status"));
 }
+
+/// On a multi-server install this host's zmdc.pl runs only the monitors
+/// whose ServerId is this host; another server's are left to it (#229).
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn another_servers_monitor_is_left_to_that_server() {
+    use sea_orm::{ActiveModelTrait, Set};
+    let tmp = tempfile::tempdir().unwrap();
+    let seen = fake_zmdc(tmp.path(), "");
+    let dir = tmp.path().to_path_buf();
+    let app = TestApp::spawn_with(move |state| {
+        let mut config = (*state.config).clone();
+        config.daemon.socket_path = dir;
+        config.daemon.socket_name = "zmdc.sock".to_string();
+        state.config = Arc::new(config);
+        state.server_id = Some(1);
+    })
+    .await;
+    let token = superuser_token();
+
+    let mut ids = Vec::new();
+    let mut guards = Vec::new();
+    for server in [1u32, 2] {
+        let m = insert_monitor(&app.db, "MultiSrv").await.unwrap();
+        guards.push(RowGuard::monitor(m.id));
+        let mut am: zm_api::entity::monitors::ActiveModel = m.clone().into();
+        am.server_id = Set(Some(server));
+        am.update(&app.db).await.unwrap();
+        ids.push(m.id);
+    }
+    for id in &ids {
+        let resp = app
+            .patch_json(
+                &format!("/api/v3/monitors/{id}/state"),
+                &token,
+                &json!({ "state": "stop" }),
+            )
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK, "{}", resp.text());
+    }
+    let seen = seen.lock().unwrap().clone();
+    assert!(
+        seen.contains(&format!("stop;zmc;-m;{}", ids[0])),
+        "{seen:?}"
+    );
+    assert!(
+        !seen.iter().any(|m| m.contains(&format!("-m;{}", ids[1]))),
+        "server 2's monitor went to server 1's zmdc: {seen:?}"
+    );
+}
