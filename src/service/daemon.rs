@@ -509,13 +509,20 @@ pub async fn apply_state_to_db(
 /// decides whether to restart daemons based on run mode:
 /// - Takeover/active mode (daemon manager present): zm-api supervises the
 ///   ZoneMinder daemons, so restart them to pick up the new monitor config.
-/// - Passive mode (no daemon manager, the default): zm-api is just a REST API
-///   over the shared ZoneMinder database; `zoneminder.service` owns the daemon
-///   lifecycle (zmdc/zmpkg) and reconciles from the DB itself — we must not
-///   restart anything. Calling `system_restart` unconditionally previously
-///   failed with "Daemon manager not available" *after* the transaction had
-///   committed, so the caller saw an error even though the state was applied.
+/// - Passive mode (no daemon manager, the default): ZoneMinder's zmdc.pl
+///   supervises, and it doesn't watch the database. Each monitor whose modes
+///   the state changed gets what an edit sends zmdc.pl, stop then start
+///   (#204), in the background so a large state doesn't hold the request
+///   open. There is no whole-system restart here: `system_restart` needs the
+///   daemon manager.
 pub async fn apply_state(state: &AppState, state_name: &str) -> AppResult<DaemonActionResponse> {
+    // Passive mode moves only the monitors the state changes, so it needs
+    // their rows from before.
+    let before = if state.daemon_manager.is_none() {
+        monitors::Entity::find().all(state.db.as_ref()).await?
+    } else {
+        Vec::new()
+    };
     let updated_monitors = apply_state_to_db(state.db.as_ref(), state_name).await?;
 
     if state.daemon_manager.is_some() {
@@ -539,15 +546,50 @@ pub async fn apply_state(state: &AppState, state_name: &str) -> AppResult<Daemon
             }
         }
     } else {
+        // ZoneMinder doesn't pick the change up from the database by itself
+        // (#204). Each monitor whose modes changed gets what an edit sends
+        // zmdc.pl: stop as it was, start as it is now.
+        let after = monitors::Entity::find().all(state.db.as_ref()).await?;
+        let moved: Vec<(monitors::Model, monitors::Model)> = changed_modes(&before, &after)
+            .into_iter()
+            .map(|(old, new)| (old.clone(), new.clone()))
+            .collect();
+        let count = moved.len();
+        // Each zmdc call can take seconds; don't make the caller wait for
+        // all of them.
+        let bg = state.clone();
+        tokio::spawn(async move {
+            for (old, new) in &moved {
+                crate::service::monitor_daemons::updated(&bg, old, new).await;
+            }
+        });
         info!(
-            "State '{}' applied to {} monitors (passive mode; daemon reconciliation left to zoneminder.service)",
-            state_name, updated_monitors
+            "State '{}' applied to {} monitors; restarting the daemons of {} through zmdc.pl",
+            state_name, updated_monitors, count
         );
         Ok(DaemonActionResponse::success(format!(
-            "State '{}' applied: {} monitors updated (daemons managed by zoneminder.service)",
-            state_name, updated_monitors
+            "State '{}' applied: {} monitors updated, {} with daemons restarting",
+            state_name, updated_monitors, count
         )))
     }
+}
+
+/// The monitors whose Capturing, Analysing or Recording differ between two
+/// reads, as (before, after).
+fn changed_modes<'a>(
+    before: &'a [monitors::Model],
+    after: &'a [monitors::Model],
+) -> Vec<(&'a monitors::Model, &'a monitors::Model)> {
+    after
+        .iter()
+        .filter_map(|new| {
+            let old = before.iter().find(|m| m.id == new.id)?;
+            (old.capturing != new.capturing
+                || old.analysing != new.analysing
+                || old.recording != new.recording)
+                .then_some((old, new))
+        })
+        .collect()
 }
 
 /// Parse a function string to the Function enum.
