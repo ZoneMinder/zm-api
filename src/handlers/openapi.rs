@@ -206,6 +206,7 @@ use crate::util::claim::UserClaims;
         crate::handlers::settings_tables::create_encoder_template,
         crate::handlers::settings_tables::update_encoder_template,
         crate::handlers::settings_tables::delete_encoder_template,
+        crate::handlers::sounds::get_sound,
         crate::handlers::settings_tables::list_menu_items,
         crate::handlers::settings_tables::get_menu_item,
         crate::handlers::settings_tables::create_menu_item,
