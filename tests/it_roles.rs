@@ -148,3 +148,125 @@ async fn a_user_cannot_be_given_a_role_that_does_not_exist() {
         .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{}", resp.text());
 }
+
+/// A role's per-monitor rows can be listed, set and cleared, and they take
+/// effect for the role's users the way ZoneMinder applies them (#196).
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn a_roles_monitor_and_group_rows_round_trip_and_apply() {
+    use common::fixtures::{insert_group, insert_monitor};
+    use zm_api::dto::response::role_permissions::RolePermissionResponse;
+    let app = TestApp::spawn().await;
+    let admin = superuser_token();
+    let role: RoleResponse = app
+        .post_json(
+            "/api/v3/roles",
+            &admin,
+            &json!({ "name": unique_name("RoleRows"), "monitors": "View" }),
+        )
+        .await
+        .json();
+    let _rg = role_guard(role.id);
+    let shown = insert_monitor(&app.db, "RoleShown").await.unwrap();
+    let _m1 = RowGuard::monitor(shown.id);
+    let hidden = insert_monitor(&app.db, "RoleHidden").await.unwrap();
+    let _m2 = RowGuard::monitor(hidden.id);
+
+    let username = unique_name("rolerows");
+    let password = "role-rows-pw-1";
+    let resp = app
+        .post_json(
+            "/api/v3/users",
+            &admin,
+            &json!({
+                "username": username, "password": password, "email": "",
+                "role_id": role.id,
+                "stream": "None", "events": "None", "control": "None", "monitors": "None",
+                "groups": "None", "devices": "None", "snapshots": "None", "system": "None",
+            }),
+        )
+        .await;
+    assert!(resp.status().is_success(), "{}", resp.text());
+    let user: UserResponse = resp.json();
+    let _ug = RowGuard::user(user.id);
+
+    let base = format!("/api/v3/roles/{}/monitors-permissions", role.id);
+    let set = |permission: &'static str, mid: u32| {
+        let app = &app;
+        let admin = admin.clone();
+        let base = base.clone();
+        async move {
+            app.put_json(
+                &format!("{base}/{mid}"),
+                &admin,
+                &json!({ "permission": permission }),
+            )
+            .await
+        }
+    };
+    let r = set("View", hidden.id).await;
+    assert_eq!(r.status(), StatusCode::OK, "{}", r.text());
+    let first: RolePermissionResponse = r.json();
+    let r = set("None", hidden.id).await;
+    let row: RolePermissionResponse = r.json();
+    assert_eq!(row.id, first.id, "a second set updates the row");
+    assert_eq!(
+        (row.target_id, row.permission.as_str()),
+        (hidden.id, "None")
+    );
+    assert_eq!(
+        set("Admin", hidden.id).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(set("View", u32::MAX).await.status(), StatusCode::NOT_FOUND);
+    let list: Vec<RolePermissionResponse> = app.get(&base, &admin).await.json();
+    assert_eq!(list.len(), 1);
+
+    // The role's user sees every monitor but the one its row denies.
+    let token = login(&app, &username, password).await;
+    let get = |id: u32| {
+        let app = &app;
+        let token = token.clone();
+        async move {
+            app.get(&format!("/api/v3/monitors/{id}"), &token)
+                .await
+                .status()
+        }
+    };
+    assert_eq!(get(shown.id).await, StatusCode::OK);
+    assert_eq!(get(hidden.id).await, StatusCode::NOT_FOUND);
+
+    let r = app.delete(&format!("{base}/{}", hidden.id), &admin).await;
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        get(hidden.id).await,
+        StatusCode::OK,
+        "cleared: the role's level applies"
+    );
+    let r = app.delete(&format!("{base}/{}", hidden.id), &admin).await;
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+
+    // Groups go the same way.
+    let group = insert_group(&app.db, "RoleGroup").await.unwrap();
+    let _gg = RowGuard::group(group.id);
+    let gbase = format!("/api/v3/roles/{}/groups-permissions", role.id);
+    let r = app
+        .put_json(
+            &format!("{gbase}/{}", group.id),
+            &admin,
+            &json!({ "permission": "Edit" }),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::OK, "{}", r.text());
+    let list: Vec<RolePermissionResponse> = app.get(&gbase, &admin).await.json();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].permission, "Edit");
+    let r = app.delete(&format!("{gbase}/{}", group.id), &admin).await;
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+
+    // Unknown role.
+    let r = app
+        .get("/api/v3/roles/4294967295/monitors-permissions", &admin)
+        .await;
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+}

@@ -225,6 +225,12 @@ use crate::util::claim::UserClaims;
         crate::handlers::ptz::audio_play,
         crate::handlers::ptz::light_status,
         crate::handlers::event_audit::event_audit,
+        crate::handlers::role_permissions::list_monitors,
+        crate::handlers::role_permissions::set_monitor,
+        crate::handlers::role_permissions::clear_monitor,
+        crate::handlers::role_permissions::list_groups,
+        crate::handlers::role_permissions::set_group,
+        crate::handlers::role_permissions::clear_group,
         crate::handlers::roles::list_roles,
         crate::handlers::roles::get_role,
         crate::handlers::roles::create_role,
@@ -635,6 +641,8 @@ use crate::util::claim::UserClaims;
             crate::dto::request::roles::CreateRoleRequest,
             crate::dto::request::roles::UpdateRoleRequest,
             crate::dto::response::roles::RoleResponse,
+            crate::dto::response::role_permissions::RolePermissionResponse,
+            crate::dto::request::role_permissions::SetRolePermissionRequest,
             crate::dto::response::roles::PaginatedRolesResponse,
 
             // monitor presets
