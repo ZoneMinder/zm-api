@@ -10,6 +10,8 @@ use crate::repo;
 use crate::server::state::AppState;
 use crate::service::monitor_acl::MonitorScope;
 use crate::util::authz::Level;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use rust_decimal::prelude::*;
 use sea_orm::ActiveValue::{NotSet, Set};
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, TransactionTrait};
@@ -975,6 +977,43 @@ pub async fn audio_level(
     })
 }
 
+/// What an alarm's cause and text may not contain: anything but letters,
+/// combining marks, digits, spaces and plain punctuation. Both are stored on
+/// the event (`Events.Cause`, `Events.Notes`), so markup, quotes, backslashes
+/// and control characters are dropped. The same class as ZoneMinder's API v2
+/// (`MonitorsController::alarmCause`); marks keep decomposed accents.
+static ALARM_TEXT_DROP: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[^\p{L}\p{M}\p{N} _.,:;!?()\[\]/+#@%=-]+").unwrap());
+
+fn plain_alarm_text(value: &str) -> String {
+    let kept = ALARM_TEXT_DROP.replace_all(value, "");
+    kept.split(' ')
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The cause to record for a forced alarm: the request's, filtered, or "API"
+/// when none is given or nothing usable is left.
+fn alarm_cause(cause: Option<&str>) -> String {
+    let cause = plain_alarm_text(cause.unwrap_or(""));
+    if cause.is_empty() {
+        "API".to_string()
+    } else {
+        cause
+    }
+}
+
+/// The note text for a forced alarm, filtered as the cause is.
+fn alarm_text(text: Option<&str>) -> String {
+    let text = plain_alarm_text(text.unwrap_or(""));
+    if text.is_empty() {
+        "Triggered via REST API".to_string()
+    } else {
+        text
+    }
+}
+
 pub async fn control_alarm(
     state: &AppState,
     id: u32,
@@ -1001,13 +1040,13 @@ pub async fn control_alarm(
         "on" => {
             // Trigger alarm via shared memory
             let score = req.score.unwrap_or(100);
-            let cause = req.cause.as_deref().unwrap_or("API");
-            let text = req.text.as_deref().unwrap_or("Triggered via REST API");
+            let cause = alarm_cause(req.cause.as_deref());
+            let text = alarm_text(req.text.as_deref());
 
             // The shared-memory mmap/poke is blocking; run it off the async
             // executor so it can't stall the runtime. REVIEW_FIXES_PLAN §4.3.
-            let cause_owned = cause.to_string();
-            let text_owned = text.to_string();
+            let cause_owned = cause.clone();
+            let text_owned = text;
             tokio::task::spawn_blocking(move || {
                 zm_shm::trigger_alarm(id, score, &cause_owned, &text_owned)
             })
@@ -1180,5 +1219,52 @@ mod linked_monitor_tests {
         ] {
             assert!(linked_monitor_ids(bad).is_err(), "{bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod alarm_text_tests {
+    use super::{alarm_cause, alarm_text};
+
+    #[test]
+    fn plain_causes_are_kept() {
+        assert_eq!(alarm_cause(Some("HA-test")), "HA-test");
+        assert_eq!(
+            alarm_cause(Some("Doorbell (front): pressed!")),
+            "Doorbell (front): pressed!"
+        );
+        assert_eq!(alarm_cause(Some("Türklingel")), "Türklingel");
+        // A decomposed accent (e + U+0301) keeps its combining mark
+        assert_eq!(alarm_cause(Some("Cafe\u{301}")), "Cafe\u{301}");
+        // "0" is a cause like any other, not a missing one
+        assert_eq!(alarm_cause(Some("0")), "0");
+    }
+
+    #[test]
+    fn markup_quotes_and_control_characters_are_dropped() {
+        assert_eq!(
+            alarm_cause(Some("<svg onload=alert(1)>")),
+            "svg onload=alert(1)"
+        );
+        assert_eq!(alarm_cause(Some("a'b\"c\\d&e`f$g|h")), "abcdefgh");
+        assert_eq!(alarm_cause(Some("l1\nl2\tx\0")), "l1l2x");
+        assert_eq!(alarm_cause(Some("  a    b  ")), "a b");
+    }
+
+    #[test]
+    fn missing_empty_or_unusable_cause_is_the_default() {
+        assert_eq!(alarm_cause(None), "API");
+        assert_eq!(alarm_cause(Some("")), "API");
+        assert_eq!(alarm_cause(Some("<>\"'&")), "API");
+    }
+
+    #[test]
+    fn text_is_filtered_the_same_way() {
+        assert_eq!(alarm_text(None), "Triggered via REST API");
+        assert_eq!(
+            alarm_text(Some("<b>Front door</b> opened")),
+            "bFront door/b opened"
+        );
+        assert_eq!(alarm_text(Some("\u{7}")), "Triggered via REST API");
     }
 }
