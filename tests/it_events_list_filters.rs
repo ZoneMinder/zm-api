@@ -595,3 +595,55 @@ async fn counts_refuse_out_of_range_hours() {
         }
     }
 }
+
+/// `counts-by-monitor` can leave archived events out, as ZoneMinder's
+/// `consoleEvents/<interval>/Archived=:0` does (#205).
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn counts_by_monitor_filters_archived_events() {
+    let app = TestApp::spawn().await;
+    let token = superuser_token();
+    let monitor = insert_monitor(&app.db, "EvCountArch").await.expect("mon");
+    let _mon = RowGuard::monitor(monitor.id);
+
+    let mut guards = Vec::new();
+    for archived in [0u8, 0, 1] {
+        let id = zm_api::entity::events::ActiveModel {
+            monitor_id: Set(monitor.id),
+            state_id: Set(1),
+            name: Set(unique_name("EvCountArch")),
+            start_date_time: Set(Some(chrono::Utc::now().naive_utc())),
+            length: Set(Decimal::new(1, 0)),
+            archived: Set(archived),
+            ..Default::default()
+        }
+        .insert(&app.db)
+        .await
+        .expect("insert event fixture")
+        .id;
+        guards.push(guard_event(id));
+    }
+
+    let count = |query: &'static str| {
+        let app = &app;
+        let token = token.clone();
+        let mid = monitor.id;
+        async move {
+            let r = app
+                .get(
+                    &format!("/api/v3/events/counts-by-monitor/24{query}"),
+                    &token,
+                )
+                .await;
+            assert_eq!(r.status(), StatusCode::OK, "{query}: {}", r.text());
+            r.json::<zm_api::dto::response::events::EventCountsByMonitorResponse>()
+                .counts
+                .into_iter()
+                .find(|c| c.monitor_id == mid)
+                .map_or(0, |c| c.count)
+        }
+    };
+    assert_eq!(count("").await, 3, "no filter counts every event");
+    assert_eq!(count("?archived=false").await, 2);
+    assert_eq!(count("?archived=true").await, 1);
+}
