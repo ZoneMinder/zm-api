@@ -64,6 +64,28 @@ where
     Ok(())
 }
 
+/// webrtc-rs's mDNS client warns about every A/AAAA answer on the LAN that
+/// has no A record, whether or not it answers one of our queries: about 100
+/// lines a minute on a network with printers and TVs (#258). Its errors
+/// still show. Naming `rtc_mdns` in `RUST_LOG` overrides this.
+const QUIET_TARGETS: &[&str] = &["rtc_mdns=error"];
+
+/// The filter for `RUST_LOG` (`info` when unset or unparsable), with the
+/// quiet targets added unless `RUST_LOG` names them itself.
+fn log_filter(rust_log: Option<&str>) -> EnvFilter {
+    let spec = rust_log.filter(|s| !s.trim().is_empty()).unwrap_or("info");
+    let mut filter = EnvFilter::try_new(spec).unwrap_or_else(|_| EnvFilter::new("info"));
+    for quiet in QUIET_TARGETS {
+        let target = quiet.split('=').next().unwrap_or_default();
+        if !spec.contains(target) {
+            if let Ok(directive) = quiet.parse() {
+                filter = filter.add_directive(directive);
+            }
+        }
+    }
+    filter
+}
+
 pub fn init() -> AppResult<LogGuards> {
     let log_dir = get_log_dir();
     let file_appender = RollingFileAppender::new(Rotation::DAILY, &log_dir, "zm-api.log");
@@ -76,7 +98,7 @@ pub fn init() -> AppResult<LogGuards> {
         .finish(std::io::stdout());
     init_subscriber(create_subscriber(
         "zm-api",
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        log_filter(std::env::var(EnvFilter::DEFAULT_ENV).ok().as_deref()),
         stdout,
         file_appender,
     ))?;
@@ -84,4 +106,31 @@ pub fn init() -> AppResult<LogGuards> {
         _stdout: stdout_guard,
         _file: file_appender_guard,
     })
+}
+
+#[cfg(test)]
+mod log_filter_tests {
+    use super::log_filter;
+
+    #[test]
+    fn mdns_warnings_are_quiet_by_default() {
+        for env in [None, Some(""), Some("info"), Some("debug,hyper=warn")] {
+            let f = log_filter(env).to_string();
+            assert!(f.contains("rtc_mdns=error"), "{env:?} -> {f}");
+        }
+    }
+
+    #[test]
+    fn rust_log_naming_mdns_wins() {
+        let f = log_filter(Some("info,rtc_mdns=trace")).to_string();
+        assert!(f.contains("rtc_mdns=trace"), "{f}");
+        assert!(!f.contains("rtc_mdns=error"), "{f}");
+    }
+
+    #[test]
+    fn an_unparsable_rust_log_falls_back_to_info() {
+        let f = log_filter(Some("info,=[bad")).to_string();
+        assert!(f.contains("info"), "{f}");
+        assert!(f.contains("rtc_mdns=error"), "{f}");
+    }
 }
