@@ -130,6 +130,10 @@ pub struct LiveStreamCoordinator {
     /// Handle to the idle-session reaper task, retained so it is aborted when
     /// the coordinator is dropped (REVIEW_FIXES_PLAN §3.2).
     idle_watchdog: std::sync::Mutex<Option<JoinHandle<()>>>,
+    /// Readers `stop_session` left running because something else still read
+    /// them. The watchdog stops each once nothing does and no session has
+    /// taken it back (#256).
+    kept_readers: std::sync::Mutex<std::collections::HashSet<u32>>,
 }
 
 impl LiveStreamCoordinator {
@@ -143,6 +147,7 @@ impl LiveStreamCoordinator {
             hls_manager,
             sessions: Arc::new(RwLock::new(HashMap::new())),
             idle_watchdog: std::sync::Mutex::new(None),
+            kept_readers: Default::default(),
         }
     }
 
@@ -185,6 +190,7 @@ impl LiveStreamCoordinator {
                         warn!("Failed to reap idle session {}: {}", monitor_id, e);
                     }
                 }
+                coord.stop_unread_kept_readers().await;
                 // Drop the strong ref before sleeping so it never pins the
                 // coordinator across the idle interval.
                 drop(coord);
@@ -509,9 +515,11 @@ impl LiveStreamCoordinator {
 
         session.status = SessionStatus::Stopping;
 
-        // Abort the processing task
+        // Abort the processing task, and wait for it to go so its
+        // subscriptions to the source are dropped before they're counted.
         if let Some(handle) = session.task_handle.take() {
             handle.abort();
+            let _ = handle.await;
         }
 
         // Stop HLS session if enabled
@@ -521,13 +529,54 @@ impl LiveStreamCoordinator {
             }
         }
 
-        // Stop the source reader
-        let _ = self.source_router.stop_reader(monitor_id).await;
+        // Stop the source reader, unless something else still reads it: a
+        // WebRTC or WHEP viewer, or an RTSP client, shares this reader, and
+        // the idle reaper ends a session nobody fetches HLS from (#256).
+        let others = self
+            .source_router
+            .get_existing_source(monitor_id)
+            .map_or(0, |s| {
+                s.video_subscriber_count() + s.audio_subscriber_count()
+            });
+        if others == 0 {
+            let _ = self.source_router.stop_reader(monitor_id).await;
+        } else {
+            info!(
+                "Leaving monitor {}'s reader running for {} other subscriber(s)",
+                monitor_id, others
+            );
+            self.kept_readers.lock().unwrap().insert(monitor_id);
+        }
 
         sessions.remove(&monitor_id);
 
         info!("Stopped live streaming session for monitor {}", monitor_id);
         Ok(())
+    }
+
+    /// Stop the readers [`stop_session`](Self::stop_session) left running
+    /// for other subscribers, once none are left. A reader a new session has
+    /// taken back is that session's again. Called by the idle watchdog each
+    /// tick.
+    pub async fn stop_unread_kept_readers(&self) {
+        let kept: Vec<u32> = self.kept_readers.lock().unwrap().iter().copied().collect();
+        if kept.is_empty() {
+            return;
+        }
+        let sessions = self.sessions.read().await;
+        for monitor_id in kept {
+            let unread = self
+                .source_router
+                .get_existing_source(monitor_id)
+                .is_none_or(|s| s.video_subscriber_count() + s.audio_subscriber_count() == 0);
+            if sessions.contains_key(&monitor_id) {
+                self.kept_readers.lock().unwrap().remove(&monitor_id);
+            } else if unread {
+                let _ = self.source_router.stop_reader(monitor_id).await;
+                self.kept_readers.lock().unwrap().remove(&monitor_id);
+                info!("Stopped monitor {}'s reader: nothing reads it", monitor_id);
+            }
+        }
     }
 
     /// Check if a session exists
