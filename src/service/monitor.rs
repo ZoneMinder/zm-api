@@ -957,10 +957,12 @@ pub async fn audio_level(
         .ok_or_else(|| monitor_not_found(id))?;
     let until = (chrono::Utc::now().timestamp() + 10) as u32;
     let live = tokio::task::spawn_blocking(move || {
-        crate::zm_shm::MonitorShm::connect(id).ok().map(|mut shm| {
-            let _ = shm.request_audio_level(until);
-            (shm.get_audio_level(), shm.get_audio_alarm())
-        })
+        crate::zm_shm::MonitorShm::connect(id)
+            .ok()
+            .and_then(|mut shm| {
+                let _ = shm.request_audio_level(until);
+                shm.live_audio()
+            })
     })
     .await
     .ok()

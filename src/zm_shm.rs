@@ -52,6 +52,10 @@ pub const DEFAULT_SHM_PATH: &str = "/dev/shm";
 /// Default shared memory file prefix.
 pub const DEFAULT_SHM_PREFIX: &str = "zm.mmap";
 
+/// How stale zmc's heartbeat may be before its audio reading counts as gone.
+/// The same window the event stream uses for "zmc is running".
+const LIVE_AUDIO_MAX_HEARTBEAT_AGE: Duration = Duration::from_secs(10);
+
 /// Errors that can occur when accessing ZoneMinder shared memory.
 #[derive(Debug, Error)]
 pub enum ShmError {
@@ -684,6 +688,14 @@ impl MonitorShm {
         Ok(())
     }
 
+    /// The audio level and alarm while zmc is running, else `None`. A
+    /// segment a killed zmc left behind still reads as valid, so the
+    /// heartbeat has to be recent too (#193).
+    pub fn live_audio(&self) -> Option<(u8, bool)> {
+        self.is_alive(LIVE_AUDIO_MAX_HEARTBEAT_AGE)
+            .then(|| (self.get_audio_level(), self.get_audio_alarm()))
+    }
+
     /// The audio level zmc last published, 0-100 (#180). Zero is a real
     /// reading: silence, or nothing measured.
     pub fn get_audio_level(&self) -> u8 {
@@ -940,6 +952,40 @@ mod tests {
             u32::from_ne_bytes(read_segment(dir.path(), 7)[872..876].try_into().unwrap()),
             560
         );
+    }
+
+    fn set_heartbeat(dir: &std::path::Path, id: u32, at: i64) {
+        let path = dir.join(format!("zm.mmap.{id}"));
+        let mut buf = std::fs::read(&path).unwrap();
+        buf[128..136].copy_from_slice(&at.to_ne_bytes());
+        std::fs::write(&path, &buf).unwrap();
+    }
+
+    /// A segment left by a zmc that's gone has no live audio reading (#193).
+    #[test]
+    fn live_audio_needs_a_recent_heartbeat() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().to_str().unwrap();
+        fake_segment(dir.path(), 8, 888, 560);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        // Never beat.
+        let shm = MonitorShm::connect_with_path(8, p, "zm.mmap").unwrap();
+        assert_eq!(shm.live_audio(), None);
+        drop(shm);
+
+        // Last beat a minute ago: zmc was killed and left the segment valid.
+        set_heartbeat(dir.path(), 8, now - 60);
+        let shm = MonitorShm::connect_with_path(8, p, "zm.mmap").unwrap();
+        assert_eq!(shm.live_audio(), None);
+        drop(shm);
+
+        set_heartbeat(dir.path(), 8, now);
+        let shm = MonitorShm::connect_with_path(8, p, "zm.mmap").unwrap();
+        assert_eq!(shm.live_audio(), Some((0, false)));
     }
 
     /// ZoneMinder 1.38: SharedData is 872 bytes.
