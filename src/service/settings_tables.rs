@@ -1,6 +1,6 @@
 //! ZoneMinder 1.39's EncoderTemplates and Menu_Items (#144).
 
-use sea_orm::{ActiveModelTrait, EntityTrait, NotSet, QueryOrder, Set};
+use sea_orm::{ActiveModelTrait, EntityTrait, NotSet, QueryOrder, Set, TransactionTrait};
 
 use crate::dto::request::settings_tables::{
     CreateEncoderTemplateRequest, CreateMenuItemRequest, UpdateEncoderTemplateRequest,
@@ -177,6 +177,47 @@ pub async fn delete_menu_item(state: &AppState, id: u32) -> AppResult<()> {
         return Err(not_found("menu_item", id));
     }
     Ok(())
+}
+
+/// The menu a fresh install has: ZoneMinder's `zm_create.sql` seed. Its
+/// Options > Menu Reset (`actions/options.php`, `resetmenu`) inserts the
+/// same rows less Watch; a reset here gives back what a new install shows.
+pub const DEFAULT_MENU: &[(&str, i16)] = &[
+    ("Console", 10),
+    ("Watch", 15),
+    ("Montage", 20),
+    ("MontageReview", 30),
+    ("Events", 40),
+    ("Options", 50),
+    ("Log", 60),
+    ("Devices", 70),
+    ("IntelGpu", 80),
+    ("Groups", 90),
+    ("Filters", 100),
+    ("Snapshots", 110),
+    ("Reports", 120),
+    ("ReportEventAudit", 130),
+    ("Map", 140),
+];
+
+/// Replace every menu item with [`DEFAULT_MENU`], in one transaction, so a
+/// failure leaves the old menu as it was (#197).
+pub async fn reset_menu_items(state: &AppState) -> AppResult<Vec<MenuItemResponse>> {
+    let txn = state.db().begin().await?;
+    menu_items::Entity::delete_many().exec(&txn).await?;
+    menu_items::Entity::insert_many(DEFAULT_MENU.iter().map(|(key, order)| {
+        menu_items::ActiveModel {
+            id: NotSet,
+            menu_key: Set((*key).to_string()),
+            enabled: Set(1),
+            sort_order: Set(*order),
+            ..Default::default()
+        }
+    }))
+    .exec(&txn)
+    .await?;
+    txn.commit().await?;
+    list_menu_items(state).await
 }
 
 // ---- Privacy statement ---------------------------------------------------------
