@@ -14,7 +14,9 @@ services:
       MYSQL_USER: zmuser
       MYSQL_PASSWORD: zmpass
     ports:
-      - "3307:3306"
+      # Loopback only: the passwords here are in the repository, and without
+      # an address Docker publishes the port on every interface.
+      - "127.0.0.1:3307:3306"
     volumes:
       - test-db-data:/var/lib/mysql
     healthcheck:
@@ -36,7 +38,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_DB: zm_test_pg
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - test-db-postgres-data:/var/lib/postgresql/data
     healthcheck:

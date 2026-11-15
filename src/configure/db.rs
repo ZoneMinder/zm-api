@@ -117,14 +117,18 @@ fn default_database_name() -> String {
 }
 
 /// Where MariaDB and MySQL put their socket: Debian/Ubuntu and Arch (and the
-/// /var/run symlink to it), openSUSE, the Red Hat family, and the upstream
-/// tarball default.
+/// /var/run symlink to it), openSUSE, and the Red Hat family.
+///
+/// The upstream tarball's `/tmp/mysql.sock` is left out on purpose. Any local
+/// user can create a socket there, and whenever the real ones are absent (the
+/// database not started yet) zm-api would connect to it, send it the database
+/// password and believe its `Users` table. An install that does keep its
+/// socket in `/tmp` names it in `db.socket`.
 const DEFAULT_SOCKETS: &[&str] = &[
     "/run/mysqld/mysqld.sock",
     "/var/run/mysqld/mysqld.sock",
     "/run/mysql/mysql.sock",
     "/var/lib/mysql/mysql.sock",
-    "/tmp/mysql.sock",
 ];
 
 /// The Unix socket a connection to `host` should go through, if any.
@@ -378,6 +382,18 @@ mod tests {
             .find(|(k, _)| k == "socket")
             .map(|(_, v)| v.into_owned());
         assert_eq!(socket.as_deref(), Some("/run/mysqld/mysqld.sock"));
+    }
+
+    /// A socket in a directory every local user can write to is never
+    /// picked without being asked for.
+    #[test]
+    fn a_socket_in_tmp_is_used_only_when_configured() {
+        let only_tmp = |p: &str| p == "/tmp/mysql.sock";
+        assert_eq!(resolve_socket("localhost", None, only_tmp), None);
+        assert_eq!(
+            resolve_socket("localhost", Some("/tmp/mysql.sock"), only_tmp).as_deref(),
+            Some("/tmp/mysql.sock")
+        );
     }
 
     #[test]

@@ -32,7 +32,7 @@ build_deb() {
     echo "cargo-deb is required: cargo install cargo-deb" >&2
     return 1
   fi
-  (cd "$ROOT" && cargo deb)
+  (cd "$ROOT" && cargo deb --locked)
 }
 
 build_rpm() {

@@ -82,6 +82,10 @@ impl HlsStorage {
 
     /// Initialize storage directory for a monitor
     pub async fn init_monitor(&self, monitor_id: u32) -> Result<PathBuf, StorageError> {
+        secure_base_dir(&self.config.base_path).map_err(|e| StorageError::IoError {
+            path: self.config.base_path.clone(),
+            source: e,
+        })?;
         let monitor_path = self.config.base_path.join(monitor_id.to_string());
 
         // Create directory if it doesn't exist
@@ -545,6 +549,50 @@ pub struct StorageStats {
     pub newest_sequence: Option<u64>,
 }
 
+/// Make `base` a directory only this process's user can enter, creating it
+/// if needed.
+///
+/// The segments are live camera video, and the default base is under `/tmp`,
+/// which every local user can write to. Left at the usual 0755, any local
+/// user could read the video. Worse, one could create the path first, as
+/// their own directory or as a symlink, and have segments written wherever
+/// they chose. So: mode 0700, and refuse a base that is a symlink or belongs
+/// to someone else.
+fn secure_base_dir(base: &Path) -> std::io::Result<()> {
+    use std::io::{Error, ErrorKind};
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+
+    if let Some(parent) = base.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match std::fs::DirBuilder::new().mode(0o700).create(base) {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e),
+    }
+
+    // lstat, so a symlink is seen as one and not as what it points at.
+    let meta = std::fs::symlink_metadata(base)?;
+    if !meta.file_type().is_dir() {
+        return Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "the HLS storage path is a symlink or not a directory; \
+             set streaming.hls.storage.path to a real directory",
+        ));
+    }
+    if meta.uid() != nix::unistd::geteuid().as_raw() {
+        return Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "the HLS storage path belongs to another user; \
+             remove it or set streaming.hls.storage.path elsewhere",
+        ));
+    }
+    if meta.mode() & 0o077 != 0 {
+        std::fs::set_permissions(base, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
 /// Storage errors
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -576,6 +624,56 @@ mod tests {
             max_segments_per_stream: 10,
         };
         (HlsStorage::new(config), temp_dir)
+    }
+
+    fn mode_of(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    fn storage_at(base: PathBuf) -> HlsStorage {
+        HlsStorage::new(StorageConfig {
+            base_path: base,
+            ..StorageConfig::default()
+        })
+    }
+
+    /// Live video must not be readable by other local users.
+    #[tokio::test]
+    async fn the_base_directory_is_created_private() {
+        let temp = TempDir::new().unwrap();
+        let base = temp.path().join("hls");
+        storage_at(base.clone()).init_monitor(1).await.unwrap();
+        assert_eq!(mode_of(&base), 0o700);
+    }
+
+    #[tokio::test]
+    async fn an_existing_open_base_directory_is_closed() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = TempDir::new().unwrap();
+        let base = temp.path().join("hls");
+        std::fs::create_dir(&base).unwrap();
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o755)).unwrap();
+        storage_at(base.clone()).init_monitor(1).await.unwrap();
+        assert_eq!(mode_of(&base), 0o700);
+    }
+
+    /// A symlink planted at the path would send segments wherever it points.
+    #[tokio::test]
+    async fn a_symlinked_base_directory_is_refused() {
+        let temp = TempDir::new().unwrap();
+        let elsewhere = temp.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        let base = temp.path().join("hls");
+        std::os::unix::fs::symlink(&elsewhere, &base).unwrap();
+
+        let storage = storage_at(base);
+        assert!(storage.init_monitor(1).await.is_err());
+        assert!(storage.store_init_segment(1, b"x").await.is_err());
+        assert!(
+            std::fs::read_dir(&elsewhere).unwrap().next().is_none(),
+            "nothing may be written through the symlink"
+        );
     }
 
     #[tokio::test]

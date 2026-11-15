@@ -9,8 +9,11 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# Read-only by default. The build jobs run third-party actions (toolchain,
+# cache) and build scripts, and none of them needs to write to the repository;
+# only the `release` job, which publishes, is given that below.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -65,7 +68,10 @@ jobs:
         # Build every bin target first: the asset list ships `migrator` as
         # zm-api-db alongside the server, and cargo-deb only copies paths.
         run: |
-          cargo build --release --bins
+          # --locked: build the dependency versions in Cargo.lock, the ones
+          # reviewed and audited, as the rpm and Arch builds do. Without it a
+          # stale lockfile is quietly re-resolved to whatever is newest.
+          cargo build --release --bins --locked
           cargo deb --no-build
 
       - name: Sanity-check package (no private keys, lists files)
@@ -276,6 +282,8 @@ jobs:
   release:
     name: Publish release
     needs: [deb, rpm, arch, openapi, install-test]
+    permissions:
+      contents: write
     if: always() && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
@@ -336,7 +344,8 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: softprops/action-gh-release@v2
+      # Pinned to the commit: this step holds a token that can write releases.
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: artifacts/**
           fail_on_unmatched_files: false

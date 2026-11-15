@@ -43,7 +43,8 @@ generate_pair() {
     return 0
   fi
 
-  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$private_key"
+  # umask first: without it the key is world-readable until the chmod below.
+  (umask 077 && openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$private_key")
   openssl rsa -in "$private_key" -pubout -out "$public_key"
   chmod 600 "$private_key"
   chmod 644 "$public_key"

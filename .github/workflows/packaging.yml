@@ -33,6 +33,11 @@ concurrency:
   group: packaging-${{ github.ref }}
   cancel-in-progress: true
 
+# Nothing here writes to the repository; without this the token gets the
+# repository's default permissions, which may include write.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 

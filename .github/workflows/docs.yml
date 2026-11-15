@@ -18,10 +18,11 @@ on:
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
+# The build job runs third-party actions and builds whatever the branch
+# holds, pull requests included, so it only reads. Publishing rights go to the
+# deploy job alone.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # Let a run finish rather than cancelling it; a half-published site is worse
 # than a slightly stale one.
@@ -124,6 +125,9 @@ jobs:
     if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
