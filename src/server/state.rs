@@ -298,6 +298,16 @@ impl AppState {
                         revocations.revoke(u.id, u.token_min_expiry as i64);
                     }
                 }
+                // Off the startup path: the check costs a bcrypt verify.
+                tokio::spawn(async move {
+                    if crate::service::auth::stock_admin_login_works(&users).await {
+                        tracing::warn!(
+                            "the `admin` account still has ZoneMinder's default password \
+                             (`admin`), and this API accepts logins from the network. \
+                             Change it: PUT /api/v3/me/password."
+                        );
+                    }
+                });
             }
             Err(e) => tracing::warn!("failed to hydrate token revocations from Users: {e}"),
         }

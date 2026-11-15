@@ -23,7 +23,14 @@ use crate::constant::{ACCESS_TOKEN_DECODE_KEY, REFRESH_TOKEN_DECODE_KEY};
 use crate::error::{AppError, AppResult};
 use crate::util::authz::UserPermissions;
 
-pub static DECODE_HEADER: Lazy<Validation> = Lazy::new(|| Validation::new(Algorithm::RS256));
+pub static DECODE_HEADER: Lazy<Validation> = Lazy::new(|| {
+    let mut validation = Validation::new(Algorithm::RS256);
+    // The library's default accepts a token for 60 seconds after it expires,
+    // to allow for clock skew between issuer and verifier. Here they are the
+    // same server, so an expired token is simply expired.
+    validation.leeway = 0;
+    validation
+});
 pub static ENCODE_HEADER: Lazy<Header> = Lazy::new(|| Header::new(Algorithm::RS256));
 
 /// Which of the two token kinds a JWT is. Access and refresh tokens are
@@ -239,6 +246,14 @@ mod tests {
             uid: 7,
             perms: UserPermissions::default(),
         }
+    }
+
+    #[test]
+    fn an_expired_token_gets_no_grace_period() {
+        assert_eq!(DECODE_HEADER.leeway, 0);
+        let now = 1_000_000u64;
+        assert!(is_expired(&claims_expiring_at(now as i64 - 1), now));
+        assert!(!is_expired(&claims_expiring_at(now as i64), now));
     }
 
     #[test]

@@ -37,9 +37,12 @@ pub fn add_settings_table_routes(router: Router<AppState>) -> Router<AppState> {
 }
 
 /// `GET /api/v3/system/menu`: a login, no feature gate.
-pub fn add_navbar_route(router: Router<AppState>) -> Router<AppState> {
+pub fn add_navbar_route(router: Router<AppState>, state: AppState) -> Router<AppState> {
     router.route(
         "/api/v3/system/menu",
-        get(h::get_navbar).layer(middleware::from_fn(auth_middleware)),
+        get(h::get_navbar).layer(middleware::from_fn_with_state(
+            state,
+            crate::util::middleware::authenticated_middleware,
+        )),
     )
 }

@@ -35,6 +35,22 @@ fn bad(field: &str, value: &str, allowed: &str) -> AppError {
 }
 
 impl UserPermissionsInput {
+    /// Whether any level is set.
+    pub fn changes_any(&self) -> bool {
+        [
+            &self.stream,
+            &self.events,
+            &self.control,
+            &self.monitors,
+            &self.groups,
+            &self.devices,
+            &self.snapshots,
+            &self.system,
+        ]
+        .iter()
+        .any(|level| level.is_some())
+    }
+
     pub fn stream_level(&self) -> AppResult<Option<Stream>> {
         self.stream
             .as_deref()
@@ -210,18 +226,9 @@ impl UpdateUserRequest {
         self.password.as_deref().is_some_and(|pw| !pw.is_empty())
             || self.enabled.is_some()
             || self.api_enabled.is_some()
-            || [
-                &p.stream,
-                &p.events,
-                &p.control,
-                &p.monitors,
-                &p.groups,
-                &p.devices,
-                &p.snapshots,
-                &p.system,
-            ]
-            .iter()
-            .any(|level| level.is_some())
+            // A role's levels are in the token too (#143).
+            || self.role_id.is_some()
+            || p.changes_any()
     }
 }
 

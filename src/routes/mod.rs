@@ -675,12 +675,18 @@ pub fn create_router_app(state: AppState) -> Router {
         .merge(settings_table_routes)
         .merge(monitor_action_routes)
         .merge(monitor_action_run_route)
-        .merge(notifications::add_notification_routes(Router::new()))
+        .merge(notifications::add_notification_routes(
+            Router::new(),
+            state.clone(),
+        ))
         .merge(protect(
             media_jobs::add_job_routes(Router::new()),
             Feature::Events,
         ))
-        .merge(settings_tables::add_navbar_route(Router::new()))
+        .merge(settings_tables::add_navbar_route(
+            Router::new(),
+            state.clone(),
+        ))
         .merge(group_routes)
         .merge(server_info_routes)
         .merge(log_routes)
@@ -732,6 +738,14 @@ pub fn create_router_app(state: AppState) -> Router {
         Feature::Monitors,
     ));
 
+    // The JSON API's answers are per-user and often sensitive (accounts,
+    // camera addresses, tokens). Unless a handler says otherwise they are not
+    // to be kept: not in a browser's disk cache, and not in a proxy's, which
+    // may store the answer to a request whose credential is in its URL.
+    let api = api.layer(SetResponseHeaderLayer::if_not_present(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    ));
     let api = api.layer(CompressionLayer::new());
 
     let app =

@@ -45,9 +45,23 @@ pub async fn refresh_token(state: &AppState, req: RefreshTokenRequest) -> AppRes
     let user = user::find_by_username_and_status(&state.db, &user_claims.user, true)
         .await?
         .to_result()?;
-    // Durable revocation check: refresh tokens minted before the user's
+    // The token names its account by id. The lookup above is by username, so
+    // without this an account deleted and created again under the same name
+    // would be handed to whoever holds the old account's refresh token.
+    if user.id != user_claims.uid {
+        return Err(AppError::UnauthorizedError(
+            "Token has been revoked".to_string(),
+        ));
+    }
+    // Revocation check: refresh tokens minted before the user's
     // TokenMinExpiry floor (logout, password change) must not mint new tokens.
-    if user_claims.iat < user.token_min_expiry as i64 {
+    // The in-memory floor is checked as well as the row's: it also holds a
+    // revocation whose database write failed.
+    if user_claims.iat < user.token_min_expiry as i64
+        || state
+            .revocations
+            .is_revoked(user_claims.uid, user_claims.iat)
+    {
         return Err(AppError::UnauthorizedError(
             "Token has been revoked".to_string(),
         ));
@@ -103,9 +117,40 @@ pub async fn change_password(
     Ok(())
 }
 
+/// Whether ZoneMinder's stock login, `admin` with the password `admin`, is
+/// still good here: the account is enabled for the API and has that password.
+/// Every install starts with it, and everyone knows it.
+pub async fn stock_admin_login_works(users: &[crate::entity::users::Model]) -> bool {
+    let Some(admin) = users
+        .iter()
+        .find(|u| u.username == "admin" && u.enabled != 0 && u.api_enabled != 0)
+    else {
+        return false;
+    };
+    password::verify_existing_or_dummy("admin".to_string(), Some(admin.password.clone())).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn the_stock_admin_login_is_noticed() {
+        let stock = crate::util::password::hash("admin".to_string())
+            .await
+            .unwrap();
+        let changed = crate::util::password::hash("correct horse".to_string())
+            .await
+            .unwrap();
+        assert!(stock_admin_login_works(&[mk_user("admin", &stock)]).await);
+        assert!(!stock_admin_login_works(&[mk_user("admin", &changed)]).await);
+        // Another account with that password is not the stock login.
+        assert!(!stock_admin_login_works(&[mk_user("alice", &stock)]).await);
+        // Nor is a disabled admin.
+        let mut disabled = mk_user("admin", &stock);
+        disabled.enabled = 0;
+        assert!(!stock_admin_login_works(&[disabled]).await);
+    }
     use crate::error::AppError;
     use crate::server::state::AppState;
     use crate::util::authz::UserPermissions;
@@ -283,6 +328,66 @@ mod tests {
         )
         .await
         .expect_err("refresh with a pre-floor token must fail");
+        assert!(
+            matches!(err, AppError::UnauthorizedError(_)),
+            "expected UnauthorizedError, got {err:?}"
+        );
+    }
+
+    /// A refresh token names the account it was issued to by id. An account
+    /// deleted and created again under the same username is a different one.
+    #[tokio::test]
+    async fn test_refresh_rejected_for_another_account_with_the_same_username() {
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results::<crate::entity::users::Model, _, _>(vec![vec![mk_user(
+                "dave",
+                "irrelevant-hash",
+            )]])
+            .into_connection();
+        let state = AppState::for_test_with_db(db);
+
+        // mk_user's row has id 1; this token was issued to id 99.
+        let tokens =
+            token::generate_tokens("dave".to_string(), 99, UserPermissions::default()).unwrap();
+        let err = refresh_token(
+            &state,
+            RefreshTokenRequest {
+                token: tokens.refresh_token,
+            },
+        )
+        .await
+        .expect_err("a token for another user id must not refresh");
+        assert!(
+            matches!(err, AppError::UnauthorizedError(_)),
+            "expected UnauthorizedError, got {err:?}"
+        );
+    }
+
+    /// The in-memory floor counts too: it is all that records a revocation
+    /// whose database write failed or has not landed yet.
+    #[tokio::test]
+    async fn test_refresh_rejected_when_revoked_in_memory() {
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results::<crate::entity::users::Model, _, _>(vec![vec![mk_user(
+                "dave",
+                "irrelevant-hash",
+            )]])
+            .into_connection();
+        let state = AppState::for_test_with_db(db);
+
+        let tokens =
+            token::generate_tokens("dave".to_string(), 1, UserPermissions::default()).unwrap();
+        state
+            .revocations
+            .revoke(1, chrono::Utc::now().timestamp() + 10_000);
+        let err = refresh_token(
+            &state,
+            RefreshTokenRequest {
+                token: tokens.refresh_token,
+            },
+        )
+        .await
+        .expect_err("a token revoked in memory must not refresh");
         assert!(
             matches!(err, AppError::UnauthorizedError(_)),
             "expected UnauthorizedError, got {err:?}"
