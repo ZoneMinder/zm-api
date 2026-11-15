@@ -88,7 +88,9 @@ pub async fn change_state(
     State(state): State<AppState>,
     Path(action): Path<String>,
 ) -> AppResult<Json<MessageResponse>> {
-    info!("Handling request to change ZoneMinder state: {}", action);
+    // `{:?}`: the action is the caller's text, and a line break in it would
+    // forge a log line.
+    info!("Handling request to change ZoneMinder state: {:?}", action);
 
     let message = match action.to_lowercase().as_str() {
         "restart" => {

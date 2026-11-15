@@ -9,11 +9,18 @@ use tracing::{debug, warn};
 use crate::{server::state::AppState, util::claim::UserClaims};
 
 /// Middleware to verify JWT token for protected routes
+///
+/// It does not check token revocation. Use it only inside a router that
+/// [`authz::protect`](crate::util::authz::protect) or a monitor gate wraps,
+/// which do; a route with a login and no feature gate takes
+/// [`authenticated_middleware`]. `tests/token_revocation.rs` walks every
+/// documented route with a revoked token.
 pub async fn auth_middleware(
     request: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, String)> {
-    debug!("Authenticating request: {}", request.uri());
+    // Path only: a query string can carry a token, which must not reach logs.
+    debug!("Authenticating request: {}", request.uri().path());
 
     // Extract the authorization header
     let auth_header = request

@@ -461,18 +461,7 @@ impl PerlControlProxy {
                 "zmcontrol.pl failed"
             );
 
-            // Parse common error conditions
-            let error_msg = if stderr.contains("Authentication") {
-                return Err(PtzError::AuthenticationFailed(stderr.to_string()));
-            } else if stderr.contains("not supported") {
-                return Err(PtzError::CommandNotSupported(stderr.to_string()));
-            } else if stderr.contains("Connection") || stderr.contains("timeout") {
-                return Err(PtzError::CameraOffline(stderr.to_string()));
-            } else {
-                format!("Exit code {}: {}", exit_code, stderr)
-            };
-
-            return Err(PtzError::PerlBridgeError(error_msg));
+            return Err(classify_failure(exit_code, &stderr));
         }
 
         if !stderr.is_empty() {
@@ -486,6 +475,25 @@ impl PerlControlProxy {
         } else {
             stdout.trim()
         }))
+    }
+}
+
+/// The error for a failed zmcontrol.pl run, from what it wrote to stderr.
+///
+/// The text itself stays in the log. It goes back to whoever sent the PTZ
+/// command, who needs only Control access, and a control module's errors
+/// quote the camera's address, which holds its user name and password.
+fn classify_failure(exit_code: i32, stderr: &str) -> PtzError {
+    if stderr.contains("Authentication") {
+        PtzError::AuthenticationFailed("the camera refused the stored credentials".to_string())
+    } else if stderr.contains("not supported") {
+        PtzError::CommandNotSupported("the camera's control does not support it".to_string())
+    } else if stderr.contains("Connection") || stderr.contains("timeout") {
+        PtzError::CameraOffline("the camera did not answer".to_string())
+    } else {
+        PtzError::PerlBridgeError(format!(
+            "zmcontrol.pl exited with code {exit_code}; see the server log"
+        ))
     }
 }
 
@@ -615,6 +623,35 @@ impl PtzControlFactory for PerlControlFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A control module's error names the camera URL, password and all. The
+    /// caller, who may hold only Control access, must not be sent it.
+    #[test]
+    fn a_failed_command_does_not_return_what_zmcontrol_printed() {
+        let leaks = [
+            "Authentication failed for http://admin:hunter2@10.0.0.9/cgi-bin/ptz",
+            "Connection refused: http://admin:hunter2@10.0.0.9/cgi-bin/ptz",
+            "move not supported by http://admin:hunter2@10.0.0.9",
+            "Can't locate object via http://admin:hunter2@10.0.0.9 at line 3",
+        ];
+        for stderr in leaks {
+            let shown = classify_failure(1, stderr).to_string();
+            assert!(!shown.contains("hunter2"), "{shown}");
+            assert!(!shown.contains("10.0.0.9"), "{shown}");
+        }
+        assert!(matches!(
+            classify_failure(1, leaks[0]),
+            PtzError::AuthenticationFailed(_)
+        ));
+        assert!(matches!(
+            classify_failure(1, leaks[1]),
+            PtzError::CameraOffline(_)
+        ));
+        assert!(matches!(
+            classify_failure(2, leaks[3]),
+            PtzError::PerlBridgeError(_)
+        ));
+    }
 
     fn test_config() -> PtzConnectionConfig {
         PtzConnectionConfig {

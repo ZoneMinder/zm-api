@@ -201,6 +201,13 @@ impl AppError {
                 None => "A database error occurred".to_string(),
             };
         }
+        // A reqwest error names the URL it was sent to, which can hold a
+        // camera's or a provider's credentials and maps out what this server
+        // can reach. Same treatment as a database error.
+        if let HttpClientError(err) = &self {
+            tracing::error!("outbound HTTP request failed: {err}");
+            message = "A request to another service failed".to_string();
+        }
         let (kind, code, details, status_code) = match self {
             InvalidPayloadError(_err) => (
                 "INVALID_PAYLOAD_ERROR".to_string(),
@@ -614,6 +621,20 @@ mod tests {
         assert_eq!(body.error_message, "A database error occurred");
         assert!(!body.error_message.contains("Password"));
         assert!(!body.error_message.contains("column"));
+    }
+
+    /// A failed outbound request must not hand its URL to the client.
+    #[tokio::test]
+    async fn http_client_error_message_is_generic() {
+        // Port 1 on loopback refuses at once.
+        let err = reqwest::Client::new()
+            .get("http://admin:hunter2@127.0.0.1:1/onvif?key=s3cret")
+            .send()
+            .await
+            .expect_err("nothing listens on port 1");
+        let (status, body) = AppError::HttpClientError(err).response();
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body.error_message, "A request to another service failed");
     }
 
     /// GH #55: the message parser behind the "data too long" → 400 mapping.

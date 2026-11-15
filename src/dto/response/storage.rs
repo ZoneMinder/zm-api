@@ -30,6 +30,17 @@ pub struct StorageFilesystem {
 }
 
 impl StorageResponse {
+    /// For a caller who may view storage but not edit it: the URL without
+    /// its password. An S3 area's is its secret key
+    /// (`s3fs://KEY:SECRET@host/bucket`).
+    pub fn without_secrets(mut self) -> Self {
+        self.url = self
+            .url
+            .as_deref()
+            .map(crate::dto::response::monitor::hide_url_password);
+        self
+    }
+
     /// Fill `filesystem` from the storage path (a `statvfs`).
     pub fn with_filesystem(mut self) -> Self {
         self.filesystem = crate::daemon::stats::filesystem_usage(std::path::Path::new(&self.path))
@@ -84,5 +95,31 @@ impl From<PaginatedResponse<StorageResponse>> for PaginatedStorageResponse {
             current_page: r.current_page,
             last_page: r.last_page,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_viewer_does_not_get_the_s3_secret_key() {
+        let shown = StorageResponse {
+            id: 2,
+            name: "cloud".into(),
+            path: "/mnt/s3".into(),
+            r#type: "s3fs".into(),
+            scheme: "Medium".into(),
+            server_id: None,
+            url: Some("s3fs://AKIAEXAMPLE:wJalrXUtnFEMI@s3.example.com/bucket".into()),
+            disk_space: None,
+            do_delete: 1,
+            enabled: 1,
+            filesystem: None,
+        }
+        .without_secrets();
+        let url = shown.url.unwrap();
+        assert!(!url.contains("wJalrXUtnFEMI"), "{url}");
+        assert!(url.contains("AKIAEXAMPLE") && url.contains("s3.example.com/bucket"));
     }
 }
