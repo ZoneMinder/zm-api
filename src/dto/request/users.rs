@@ -148,11 +148,55 @@ impl UserPermissionsInput {
     }
 }
 
+/// ZoneMinder's web code builds a file name from each of these: the language
+/// file (`lang/<language>.php`), the view (`views/<home_view>.php`) and the
+/// bandwidth's config keys. A `/` or `..` stored here is a path of the
+/// writer's choosing handed to PHP's `include`, the bug behind several of
+/// ZoneMinder's file-inclusion advisories. Letters, digits, `_` and `-` only.
+fn file_name_part(value: &Option<String>, _: &()) -> garde::Result {
+    match value.as_deref() {
+        Some(v)
+            if !v
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') =>
+        {
+            Err(garde::Error::new(
+                "may hold only letters, digits, `_` and `-`",
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The shortest password an administrator may set, the same as a user may
+/// set for themselves (`PUT /me/password`).
+const MIN_PASSWORD_CHARS: usize = 6;
+
+fn new_password(value: &str, _ctx: &()) -> garde::Result {
+    if value.chars().count() < MIN_PASSWORD_CHARS {
+        return Err(garde::Error::new(format!(
+            "must be at least {MIN_PASSWORD_CHARS} characters"
+        )));
+    }
+    Ok(())
+}
+
+/// An update's password: empty means "leave it", anything else is a new one.
+fn optional_new_password(value: &Option<String>, ctx: &()) -> garde::Result {
+    match value.as_deref() {
+        None | Some("") => Ok(()),
+        Some(pw) => new_password(pw, ctx),
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize, ToSchema, Validate)]
 pub struct CreateUserRequest {
-    #[garde(length(chars, max = 64))]
+    /// The characters login accepts. Anything else could not sign in, and a
+    /// control character would end up in the log lines that name the user.
+    #[garde(length(min = 3, max = 64))]
+    #[garde(pattern("^[a-zA-Z0-9_.-]+$"))]
     pub username: String,
-    #[garde(skip)]
+    #[garde(custom(new_password))]
     pub password: String,
     #[garde(length(chars, max = 64))]
     pub email: String,
@@ -162,14 +206,14 @@ pub struct CreateUserRequest {
     pub phone: Option<String>,
     #[garde(skip)]
     pub enabled: Option<u8>,
-    #[garde(inner(length(chars, max = 8)))]
+    #[garde(inner(length(chars, max = 8)), custom(file_name_part))]
     pub language: Option<String>,
-    #[garde(inner(length(chars, max = 64)))]
+    #[garde(inner(length(chars, max = 64)), custom(file_name_part))]
     pub home_view: Option<String>,
     /// Whether the user may authenticate to the API (`APIEnabled`).
     #[garde(skip)]
     pub api_enabled: Option<u8>,
-    #[garde(inner(length(chars, max = 16)))]
+    #[garde(inner(length(chars, max = 16)), custom(file_name_part))]
     pub max_bandwidth: Option<String>,
     /// The user's role (`GET /api/v3/roles`); its permissions add to the
     /// user's own.
@@ -189,19 +233,20 @@ pub struct UpdateUserRequest {
     #[garde(skip)]
     pub enabled: Option<u8>,
     /// New password (re-hashed with bcrypt; never stored in plaintext).
-    #[garde(skip)]
+    /// Empty leaves the password as it is.
+    #[garde(custom(optional_new_password))]
     pub password: Option<String>,
     #[garde(inner(length(chars, max = 64)))]
     pub name: Option<String>,
     #[garde(inner(length(chars, max = 64)))]
     pub phone: Option<String>,
-    #[garde(inner(length(chars, max = 8)))]
+    #[garde(inner(length(chars, max = 8)), custom(file_name_part))]
     pub language: Option<String>,
-    #[garde(inner(length(chars, max = 64)))]
+    #[garde(inner(length(chars, max = 64)), custom(file_name_part))]
     pub home_view: Option<String>,
     #[garde(skip)]
     pub api_enabled: Option<u8>,
-    #[garde(inner(length(chars, max = 16)))]
+    #[garde(inner(length(chars, max = 16)), custom(file_name_part))]
     pub max_bandwidth: Option<String>,
     /// Set the token-revocation floor (unix seconds). Setting it to "now"
     /// revokes all of the user's outstanding tokens (admin revoke-all).
@@ -263,6 +308,78 @@ mod tests {
             .events_level()
             .expect_err("invalid level must be rejected");
         assert!(matches!(err, AppError::BadRequestError(_)), "got {err:?}");
+    }
+
+    fn create(username: &str, password: &str) -> CreateUserRequest {
+        CreateUserRequest {
+            username: username.into(),
+            password: password.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn profile_fields_zoneminder_builds_paths_from_hold_no_path() {
+        let with = |language: &str, home_view: &str| UpdateUserRequest {
+            language: Some(language.into()),
+            home_view: Some(home_view.into()),
+            ..Default::default()
+        };
+        assert!(with("en_gb", "console").validate().is_ok());
+        assert!(with("", "montage").validate().is_ok());
+        assert!(with("../../x", "console").validate().is_err());
+        assert!(with("en_gb", "../../../etc/passwd").validate().is_err());
+        assert!(with("en_gb", "console.php").validate().is_err());
+    }
+
+    #[test]
+    fn a_new_user_needs_a_password_of_some_length() {
+        assert!(create("alice", "").validate().is_err());
+        assert!(create("alice", "12345").validate().is_err());
+        assert!(create("alice", "123456").validate().is_ok());
+    }
+
+    #[test]
+    fn a_username_holds_only_what_login_accepts() {
+        assert!(create("al.ice-2_x", "123456").validate().is_ok());
+        for bad in [
+            "al",
+            "al ice",
+            "alice\nadmin logged in",
+            "al\u{1b}[2Jice",
+            "",
+        ] {
+            assert!(create(bad, "123456").validate().is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_update_may_leave_the_password_out_but_not_set_a_short_one() {
+        let with = |password: Option<&str>| UpdateUserRequest {
+            password: password.map(str::to_string),
+            ..Default::default()
+        };
+        assert!(with(None).validate().is_ok());
+        assert!(with(Some("")).validate().is_ok());
+        assert!(with(Some("123456")).validate().is_ok());
+        assert!(with(Some("1")).validate().is_err());
+    }
+
+    /// Moving a user to another role, or off one, changes what their token
+    /// should carry.
+    #[test]
+    fn a_role_change_counts_as_an_access_change() {
+        let set = UpdateUserRequest {
+            role_id: Some(Some(7)),
+            ..Default::default()
+        };
+        let cleared = UpdateUserRequest {
+            role_id: Some(None),
+            ..Default::default()
+        };
+        assert!(set.changes_access());
+        assert!(cleared.changes_access());
+        assert!(!UpdateUserRequest::default().changes_access());
     }
 
     /// `Stream` has no Edit level in ZoneMinder; rejecting it here keeps the

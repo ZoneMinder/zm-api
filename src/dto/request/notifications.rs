@@ -52,6 +52,33 @@ impl PushState {
     }
 }
 
+/// A monitor list is ids and commas. ZoneMinder's push sender reads the
+/// column back and splits it, so anything else stored here is handed to code
+/// that expects numbers.
+fn monitor_id_list(value: &str) -> garde::Result {
+    let ok = value.len() <= 1024
+        && value
+            .split(',')
+            .map(str::trim)
+            .all(|id| id.is_empty() || id.parse::<u32>().is_ok());
+    if ok {
+        Ok(())
+    } else {
+        Err(garde::Error::new("must be comma-separated monitor ids"))
+    }
+}
+
+fn monitor_ids(value: &Option<String>, _: &()) -> garde::Result {
+    value.as_deref().map_or(Ok(()), monitor_id_list)
+}
+
+fn monitor_ids_update(value: &Option<Option<String>>, _: &()) -> garde::Result {
+    match value {
+        Some(Some(list)) => monitor_id_list(list),
+        _ => Ok(()),
+    }
+}
+
 /// Register a push token. A token already registered is updated in place,
 /// as ZoneMinder's `notifications.json` does.
 #[derive(Debug, Serialize, Deserialize, ToSchema, Validate)]
@@ -61,7 +88,7 @@ pub struct CreateNotificationRequest {
     #[garde(skip)]
     pub platform: PushPlatform,
     /// Comma-separated monitor ids to notify for; empty or absent for all.
-    #[garde(skip)]
+    #[garde(custom(monitor_ids))]
     pub monitor_list: Option<String>,
     /// Minimum seconds between pushes.
     #[garde(skip)]
@@ -92,7 +119,7 @@ pub struct UpdateNotificationRequest {
     /// `null` clears it; omit to leave it unchanged.
     #[serde(default, deserialize_with = "crate::dto::serde_helpers::double_option")]
     #[schema(value_type = Option<String>)]
-    #[garde(skip)]
+    #[garde(custom(monitor_ids_update))]
     pub monitor_list: Option<Option<String>>,
     #[garde(skip)]
     pub interval: Option<u32>,
@@ -115,4 +142,19 @@ pub struct UpdateNotificationRequest {
     /// System editors only.
     #[garde(skip)]
     pub user_id: Option<u32>,
+}
+
+#[cfg(test)]
+mod monitor_list_tests {
+    use super::*;
+
+    #[test]
+    fn a_monitor_list_is_ids_and_commas() {
+        for ok in ["", "1", "1,2,30", " 4, 5 "] {
+            assert!(monitor_id_list(ok).is_ok(), "{ok:?}");
+        }
+        for bad in ["1 OR 1=1", "1;DROP TABLE Monitors", "a,b", "1,-2", "1\n2"] {
+            assert!(monitor_id_list(bad).is_err(), "{bad:?}");
+        }
+    }
 }
