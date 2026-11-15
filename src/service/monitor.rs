@@ -983,18 +983,32 @@ pub async fn audio_level(
 static ALARM_TEXT_DROP: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[^\p{L}\p{M}\p{N} _.,:;!?()\[\]/+#@%=-]+").unwrap());
 
-fn plain_alarm_text(value: &str) -> String {
+/// Bytes of shared memory each field holds, less the terminating NUL
+/// (`TriggerData::trigger_cause` / `trigger_text`).
+const ALARM_CAUSE_MAX: usize = 31;
+const ALARM_TEXT_MAX: usize = 255;
+
+/// `value` filtered, then cut to `max` bytes on a character boundary with
+/// any trailing space dropped: v2's order, so the limit applies to what is
+/// stored rather than to what was sent.
+fn plain_alarm_text(value: &str, max: usize) -> String {
     let kept = ALARM_TEXT_DROP.replace_all(value, "");
-    kept.split(' ')
+    let joined = kept
+        .split(' ')
         .filter(|w| !w.is_empty())
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+    let mut end = joined.len().min(max);
+    while !joined.is_char_boundary(end) {
+        end -= 1;
+    }
+    joined[..end].trim_end().to_string()
 }
 
-/// The cause to record for a forced alarm: the request's, filtered, or "API"
-/// when none is given or nothing usable is left.
+/// The cause to record for a forced alarm: the request's, filtered and cut
+/// to 31 bytes, or "API" when none is given or nothing usable is left.
 fn alarm_cause(cause: Option<&str>) -> String {
-    let cause = plain_alarm_text(cause.unwrap_or(""));
+    let cause = plain_alarm_text(cause.unwrap_or(""), ALARM_CAUSE_MAX);
     if cause.is_empty() {
         "API".to_string()
     } else {
@@ -1002,9 +1016,10 @@ fn alarm_cause(cause: Option<&str>) -> String {
     }
 }
 
-/// The note text for a forced alarm, filtered as the cause is.
+/// The note text for a forced alarm, filtered as the cause is and cut to
+/// 255 bytes.
 fn alarm_text(text: Option<&str>) -> String {
-    let text = plain_alarm_text(text.unwrap_or(""));
+    let text = plain_alarm_text(text.unwrap_or(""), ALARM_TEXT_MAX);
     if text.is_empty() {
         "Triggered via REST API".to_string()
     } else {
@@ -1264,5 +1279,32 @@ mod alarm_text_tests {
             "bFront door/b opened"
         );
         assert_eq!(alarm_text(Some("\u{7}")), "Triggered via REST API");
+    }
+
+    #[test]
+    fn a_cause_that_fits_once_filtered_is_kept_whole() {
+        // 40 bytes as sent, 31 once the quotes go
+        let sent = "\"\"\"\"\"\"\"\"\"Front door camera motion at 3am";
+        assert_eq!(sent.len(), 40);
+        assert_eq!(alarm_cause(Some(sent)), "Front door camera motion at 3am");
+    }
+
+    #[test]
+    fn a_long_cause_is_cut_to_31_bytes_on_a_character_boundary() {
+        assert_eq!(alarm_cause(Some(&"a".repeat(50))), "a".repeat(31));
+        // 15 two-byte letters fill 30 bytes; the 16th would make 32
+        let cut = alarm_cause(Some(&"ü".repeat(20)));
+        assert_eq!(cut, "ü".repeat(15));
+        // A cut that ends on a space doesn't keep it, as v2 rtrims
+        assert_eq!(
+            alarm_cause(Some(&format!("{} tail", "a".repeat(30)))),
+            "a".repeat(30)
+        );
+    }
+
+    #[test]
+    fn a_long_text_is_cut_to_the_255_byte_field() {
+        assert_eq!(alarm_text(Some(&"b".repeat(300))), "b".repeat(255));
+        assert_eq!(alarm_text(Some(&"é".repeat(200))), "é".repeat(127));
     }
 }

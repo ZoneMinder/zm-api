@@ -21192,7 +21192,7 @@
               "string",
               "null"
             ],
-            "description": "Short cause string (max 31 chars). Only used when action is \"on\". Default: \"API\""
+            "description": "Short cause. Only used when action is \"on\". Default: \"API\".\nFiltered as API v2 does, then cut to 31 bytes; up to 1024 bytes\nmay be sent."
           },
           "score": {
             "type": [
@@ -21208,7 +21208,7 @@
               "string",
               "null"
             ],
-            "description": "Description text (max 255 chars). Only used when action is \"on\"."
+            "description": "Description text. Only used when action is \"on\". Filtered as the\ncause is, then cut to 255 bytes; up to 4096 bytes may be sent."
           }
         }
       },
