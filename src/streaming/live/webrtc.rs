@@ -487,6 +487,43 @@ pub struct WebRtcLiveSession {
     pub created_at: chrono::DateTime<chrono::Utc>,
     packets_sent: AtomicU64,
     bytes_sent: AtomicU64,
+    /// Candidates the viewer has sent so far.
+    remote_candidates: AtomicU64,
+}
+
+/// The most ICE candidates a viewer may send for one session. A real client
+/// sends a handful. Each is paired with every local candidate and probed, so
+/// a viewer sending them without end would keep the server checking
+/// connectivity to addresses of the viewer's choosing.
+const MAX_REMOTE_CANDIDATES: u64 = 64;
+
+/// The largest SDP a viewer may send. Real offers and answers are a few
+/// kilobytes.
+const MAX_SDP_BYTES: usize = 64 * 1024;
+
+/// Refuse a viewer's SDP that is far larger than any real one, or that
+/// carries more candidates than [`MAX_REMOTE_CANDIDATES`]: candidates in the
+/// SDP are probed like trickled ones, and would otherwise get round that
+/// limit.
+pub fn check_remote_sdp(sdp: &str) -> Result<(), String> {
+    if sdp.len() > MAX_SDP_BYTES {
+        return Err(format!("the SDP is larger than {MAX_SDP_BYTES} bytes"));
+    }
+    let candidates = sdp
+        .lines()
+        .filter(|l| l.trim_start().starts_with("a=candidate:"))
+        .count() as u64;
+    if candidates > MAX_REMOTE_CANDIDATES {
+        return Err(format!(
+            "the SDP lists {candidates} ICE candidates; at most {MAX_REMOTE_CANDIDATES}"
+        ));
+    }
+    Ok(())
+}
+
+/// Count one more candidate against `sent`; false once past the limit.
+fn candidate_allowed(sent: &AtomicU64) -> bool {
+    sent.fetch_add(1, Ordering::Relaxed) < MAX_REMOTE_CANDIDATES
 }
 
 impl WebRtcLiveSession {
@@ -1047,6 +1084,7 @@ impl WebRtcLiveManager {
             created_at: chrono::Utc::now(),
             packets_sent: AtomicU64::new(0),
             bytes_sent: AtomicU64::new(0),
+            remote_candidates: AtomicU64::new(0),
         };
         let session_id_str = session_id.to_string();
         self.sessions
@@ -1329,6 +1367,11 @@ impl WebRtcLiveManager {
             .ok_or_else(|| WebRtcLiveError::SessionNotFound(session_id.to_string()))?;
 
         let session = session_lock.read().await;
+        if !candidate_allowed(&session.remote_candidates) {
+            return Err(WebRtcLiveError::WebRtcError(format!(
+                "more than {MAX_REMOTE_CANDIDATES} ICE candidates for one session"
+            )));
+        }
 
         let ice_candidate = RTCIceCandidateInit {
             candidate: candidate.to_string(),
@@ -1568,6 +1611,27 @@ impl MediaPump {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_oversized_or_candidate_stuffed_sdp_is_refused() {
+        let line = "a=candidate:1 1 UDP 2122252543 192.0.2.1 50000 typ host\r\n";
+        let ok = format!("v=0\r\n{}", line.repeat(8));
+        assert!(check_remote_sdp(&ok).is_ok());
+        let stuffed = format!("v=0\r\n{}", line.repeat(MAX_REMOTE_CANDIDATES as usize + 1));
+        assert!(check_remote_sdp(&stuffed).is_err());
+        let huge = format!("v=0\r\na=x:{}\r\n", "y".repeat(MAX_SDP_BYTES));
+        assert!(check_remote_sdp(&huge).is_err());
+    }
+
+    #[test]
+    fn a_session_takes_only_so_many_ice_candidates() {
+        let sent = AtomicU64::new(0);
+        for _ in 0..MAX_REMOTE_CANDIDATES {
+            assert!(candidate_allowed(&sent));
+        }
+        assert!(!candidate_allowed(&sent));
+        assert!(!candidate_allowed(&sent));
+    }
 
     #[test]
     fn test_webrtc_live_config_default() {

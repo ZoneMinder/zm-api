@@ -10,6 +10,12 @@ pub const DEFAULT_PAGE_SIZE: u64 = 25;
 /// Maximum page size allowed
 pub const MAX_PAGE_SIZE: u64 = 1000;
 
+/// The highest page number honoured. A row offset is `page * page_size`, here
+/// and inside the ORM's paginator; with a page near `u64::MAX` that multiply
+/// overflows, which panics a debug build and wraps to an arbitrary offset in
+/// a release one. No table has this many pages.
+pub const MAX_PAGE: u64 = u32::MAX as u64;
+
 /// Common pagination query parameters for list endpoints
 #[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema, Validate)]
 pub struct PaginationParams {
@@ -27,7 +33,7 @@ pub struct PaginationParams {
 impl PaginationParams {
     /// Get the page number (1-indexed), defaulting to 1
     pub fn page(&self) -> u64 {
-        self.page.unwrap_or(1).max(1)
+        self.page.unwrap_or(1).clamp(1, MAX_PAGE)
     }
 
     /// Get the page size, defaulting to DEFAULT_PAGE_SIZE
@@ -90,6 +96,19 @@ impl<T> PaginatedResponse<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `?page=18446744073709551615` must not overflow the offset.
+    #[test]
+    fn a_huge_page_number_does_not_overflow_the_offset() {
+        let params = PaginationParams {
+            page: Some(u64::MAX),
+            page_size: Some(MAX_PAGE_SIZE),
+        };
+        assert_eq!(params.page(), MAX_PAGE);
+        assert_eq!(params.offset(), (MAX_PAGE - 1) * MAX_PAGE_SIZE);
+        // What the ORM's paginator computes from the page it is given.
+        assert!(params.page().checked_mul(params.page_size()).is_some());
+    }
 
     #[test]
     fn test_pagination_params_defaults() {

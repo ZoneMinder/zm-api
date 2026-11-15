@@ -103,6 +103,33 @@ pub fn video_file_name(event_name: &str, req: &GenerateVideoRequest, format: &st
     format!("{}.{format}", parts.join("-"))
 }
 
+/// The longest side a generated video may have: 8K, the largest ZoneMinder
+/// captures.
+const MAX_OUTPUT_SIDE: u32 = 7680;
+
+/// Refuse an output larger than [`MAX_OUTPUT_SIDE`] on a side. `size` and
+/// `scale` are each held to four times the event's frame, but four times an
+/// 8K event is 30720x17280, close to 800 MB a frame for an encoder that holds
+/// several: one request from an Events editor could take the server down.
+fn output_size_allowed(req: &GenerateVideoRequest, width: u16, height: u16) -> AppResult<()> {
+    let (w, h) = if let Some(s) = req.scale {
+        (f64::from(width) * s, f64::from(height) * s)
+    } else if let Some((w, h)) = req.size.as_deref().and_then(|s| s.split_once('x')) {
+        (
+            w.parse().unwrap_or(f64::INFINITY),
+            h.parse().unwrap_or(f64::INFINITY),
+        )
+    } else {
+        return Ok(());
+    };
+    if w > f64::from(MAX_OUTPUT_SIDE) || h > f64::from(MAX_OUTPUT_SIDE) {
+        return Err(AppError::BadRequestError(format!(
+            "the video would be {w:.0}x{h:.0}; the most allowed is {MAX_OUTPUT_SIDE} on a side"
+        )));
+    }
+    Ok(())
+}
+
 /// The `-r`/`-R`/`-s`/`-S` parts of a generated file's name.
 pub fn parse_video_name(stem: &str) -> (Option<f64>, Option<f64>, Option<f64>, Option<String>) {
     let num = |s: &str| s.replacen('_', ".", 1).parse::<f64>().ok();
@@ -385,6 +412,7 @@ pub async fn enqueue_video(
         ));
     }
     let event = visible_event(state, scope, event_id, Level::Edit).await?;
+    output_size_allowed(&req, event.width, event.height)?;
     let (formats, default) = offered_formats(state).await;
     let format = match req.format.take().or(default) {
         Some(f) if formats.contains(&f) => f,
@@ -665,6 +693,25 @@ pub async fn worker(state: AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_output_larger_than_8k_is_refused() {
+        let sized = |size: &str| GenerateVideoRequest {
+            size: Some(size.into()),
+            ..Default::default()
+        };
+        let scaled = |scale: f64| GenerateVideoRequest {
+            scale: Some(scale),
+            ..Default::default()
+        };
+        assert!(output_size_allowed(&GenerateVideoRequest::default(), 7680, 4320).is_ok());
+        assert!(output_size_allowed(&sized("1920x1080"), 640, 480).is_ok());
+        assert!(output_size_allowed(&sized("7680x4320"), 640, 480).is_ok());
+        assert!(output_size_allowed(&sized("99999x99999"), 640, 480).is_err());
+        assert!(output_size_allowed(&sized("640x99999"), 640, 480).is_err());
+        assert!(output_size_allowed(&scaled(4.0), 1920, 1080).is_ok());
+        assert!(output_size_allowed(&scaled(4.0), 3840, 2160).is_err());
+    }
 
     fn req() -> GenerateVideoRequest {
         GenerateVideoRequest::default()

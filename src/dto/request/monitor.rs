@@ -92,6 +92,14 @@ pub fn is_safe_capture_path(value: &str, ctx: &()) -> garde::Result {
     if v.is_empty() || v.starts_with('/') {
         return Ok(());
     }
+    // zmc fetches whatever this names, as the server. A camera on the same
+    // host is normal, so loopback stays allowed; a cloud metadata service is
+    // never a camera, and it answers with the instance's credentials.
+    if crate::util::net_guard::names_metadata_service(v) {
+        return Err(garde::Error::new(
+            "must not point at a cloud metadata service",
+        ));
+    }
     match v.split_once("://") {
         Some((scheme, _)) if CAPTURE_SCHEMES.contains(&scheme.to_ascii_lowercase().as_str()) => {
             Ok(())
@@ -1361,6 +1369,8 @@ mod validator_tests {
 
     #[test]
     fn storage_path_must_be_shell_literal() {
+        assert!(is_safe_capture_path("rtsp://127.0.0.1:8554/cam", &()).is_ok());
+        assert!(is_safe_capture_path("http://169.254.169.254/latest/meta-data/", &()).is_err());
         assert!(is_safe_storage_path("", &()).is_ok());
         assert!(is_safe_storage_path("/var/cache/zoneminder/events", &()).is_ok());
         assert!(is_safe_storage_path("/mnt/nas-1/zm_events.2", &()).is_ok());

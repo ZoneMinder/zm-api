@@ -83,6 +83,8 @@ impl WhepSessions {
         uid: u32,
         offer_sdp: String,
     ) -> Result<(String, String), WhepError> {
+        crate::streaming::live::webrtc::check_remote_sdp(&offer_sdp)
+            .map_err(WhepError::BadOffer)?;
         let router = state
             .source_router
             .as_ref()

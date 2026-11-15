@@ -329,6 +329,8 @@ fn map_onvif_error(err: OnvifError) -> PtzError {
         OnvifError::Discovery(msg) => {
             PtzError::ProtocolError(format!("ONVIF discovery error: {msg}"))
         }
+        // As the manager answers for a refused `ControlAddress`.
+        OnvifError::Refused(msg) => PtzError::InvalidParameter(msg),
     }
 }
 

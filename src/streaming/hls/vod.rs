@@ -170,6 +170,16 @@ fn cached(id: u64, stamp: Option<FileStamp>) -> Option<Arc<VodAssets>> {
         .get(id, stamp, Instant::now())
 }
 
+/// How many recordings are packaged at once. Packaging reads the whole
+/// recording into memory, and the per-event lock below only stops the same
+/// event being built twice. A viewer opening many long events together would
+/// otherwise have them all in memory at the same time; past this many, a
+/// build waits for one to finish.
+const MAX_CONCURRENT_BUILDS: usize = 2;
+
+static BUILD_SLOTS: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(MAX_CONCURRENT_BUILDS);
+
 fn locks() -> &'static DashMap<u64, Arc<Mutex<()>>> {
     static LOCKS: OnceLock<DashMap<u64, Arc<Mutex<()>>>> = OnceLock::new();
     LOCKS.get_or_init(DashMap::new)
@@ -196,6 +206,10 @@ pub async fn get_or_build(
             Some(a) => Ok(a),
             None => {
                 let target = Duration::from_secs(VOD_SEGMENT_SECONDS);
+                let _slot = BUILD_SLOTS
+                    .acquire()
+                    .await
+                    .expect("the build semaphore is never closed");
                 let built = tokio::task::spawn_blocking(move || {
                     package_blocking(&video_path, info, target)
                 })
@@ -296,11 +310,13 @@ fn read_extradata(params: &ffmpeg_next::codec::Parameters) -> Vec<u8> {
     // `params`; we only read the extradata slice it points at.
     unsafe {
         let p = params.as_ptr();
-        let size = (*p).extradata_size as usize;
-        if size == 0 || (*p).extradata.is_null() {
+        // `extradata_size` is a C int: a negative one cast to usize would
+        // ask for a slice of nearly the whole address space.
+        let size = (*p).extradata_size;
+        if size <= 0 || (*p).extradata.is_null() {
             return Vec::new();
         }
-        std::slice::from_raw_parts((*p).extradata, size).to_vec()
+        std::slice::from_raw_parts((*p).extradata, size as usize).to_vec()
     }
 }
 
@@ -336,6 +352,23 @@ fn build_playlist(segments: &[FMP4Segment], target: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A build past the limit waits for a place instead of starting.
+    #[tokio::test]
+    async fn only_so_many_recordings_are_packaged_at_once() {
+        let mut held = Vec::new();
+        for _ in 0..MAX_CONCURRENT_BUILDS {
+            held.push(BUILD_SLOTS.acquire().await.unwrap());
+        }
+        let waiting = tokio::time::timeout(Duration::from_millis(50), BUILD_SLOTS.acquire()).await;
+        assert!(waiting.is_err(), "a build past the limit must wait");
+        drop(held);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), BUILD_SLOTS.acquire())
+                .await
+                .is_ok()
+        );
+    }
 
     fn assets(bytes: usize) -> Arc<VodAssets> {
         Arc::new(VodAssets {

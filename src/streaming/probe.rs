@@ -34,6 +34,20 @@ fn cache() -> &'static DashMap<u64, MediaInfo> {
     CACHE.get_or_init(DashMap::new)
 }
 
+/// The most probe results kept. One is added for every event anyone plays
+/// and none was ever dropped, so over a long uptime the cache grew with the
+/// number of events ever recorded.
+const MAX_CACHED_PROBES: usize = 10_000;
+
+/// Cache `info`, starting over when the cache is full. A dropped result
+/// costs one more probe of that file.
+fn remember(cache: &DashMap<u64, MediaInfo>, event_id: u64, info: MediaInfo) {
+    if cache.len() >= MAX_CACHED_PROBES {
+        cache.clear();
+    }
+    cache.insert(event_id, info);
+}
+
 /// Probe an event's video file, caching the result by event id.
 pub async fn probe_event_media(event_id: u64, path: PathBuf) -> Result<MediaInfo, String> {
     if let Some(info) = cache().get(&event_id) {
@@ -42,7 +56,7 @@ pub async fn probe_event_media(event_id: u64, path: PathBuf) -> Result<MediaInfo
     let info = tokio::task::spawn_blocking(move || probe_blocking(&path))
         .await
         .map_err(|e| format!("probe task failed: {e}"))??;
-    cache().insert(event_id, info);
+    remember(cache(), event_id, info);
     Ok(info)
 }
 
@@ -92,6 +106,16 @@ fn probe_blocking(path: &Path) -> Result<MediaInfo, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_probe_cache_does_not_grow_without_limit() {
+        let cache = DashMap::new();
+        for id in 0..(MAX_CACHED_PROBES as u64 + 10) {
+            remember(&cache, id, info(VideoCodec::H264));
+        }
+        assert!(cache.len() <= MAX_CACHED_PROBES);
+        assert!(cache.contains_key(&(MAX_CACHED_PROBES as u64 + 9)));
+    }
 
     fn info(codec: VideoCodec) -> MediaInfo {
         MediaInfo {
