@@ -98,15 +98,194 @@ pub async fn update(state: &AppState, id: u32, req: UpdateRoleRequest) -> AppRes
     if let Some(v) = p.system_level()? {
         am.system = Set(v);
     }
-    Ok(RoleResponse::from(&am.update(state.db()).await?))
+    let changes_levels = p.changes_any();
+    let saved = am.update(state.db()).await?;
+    if changes_levels {
+        let holders = holders(state, id).await?;
+        revoke_tokens(state, &holders).await?;
+    }
+    Ok(RoleResponse::from(&saved))
 }
 
 /// Delete a role. Its users keep their own levels: `Users.RoleId` is
 /// `ON DELETE SET NULL`, and the role's monitor and group rows cascade.
 pub async fn delete(state: &AppState, id: u32) -> AppResult<()> {
+    // Read who holds it first: the delete clears their `RoleId`.
+    let holders = holders(state, id).await?;
     let res = Roles::delete_by_id(id).exec(state.db()).await?;
     if res.rows_affected == 0 {
         return Err(not_found(id));
     }
+    revoke_tokens(state, &holders).await
+}
+
+/// The ids of the users holding role `id`.
+async fn holders(state: &AppState, id: u32) -> AppResult<Vec<u32>> {
+    use crate::entity::users;
+    use sea_orm::{ColumnTrait, QueryFilter};
+    Ok(users::Entity::find()
+        .filter(users::Column::RoleId.eq(id))
+        .all(state.db())
+        .await?
+        .into_iter()
+        .map(|u| u.id)
+        .collect())
+}
+
+/// Revoke the tokens of `user_ids`. A token carries the levels its user had
+/// at login, the role's included, so when a role's levels change or it goes,
+/// its users' tokens must go with it. A user edit does the same
+/// (`service::users::update`).
+async fn revoke_tokens(state: &AppState, user_ids: &[u32]) -> AppResult<()> {
+    use crate::entity::users;
+    use sea_orm::{sea_query::Expr, ColumnTrait, QueryFilter};
+    if user_ids.is_empty() {
+        return Ok(());
+    }
+    // now+1, as logout does: it covers tokens minted in the current second.
+    let floor = chrono::Utc::now().timestamp() + 1;
+    // In memory first, so the tokens are dead even if the write below fails.
+    for uid in user_ids {
+        state.revocations.revoke(*uid, floor);
+    }
+    users::Entity::update_many()
+        .col_expr(users::Column::TokenMinExpiry, Expr::value(floor as u64))
+        .filter(users::Column::Id.is_in(user_ids.iter().copied()))
+        // Only ever raise it: a floor an administrator set further ahead, to
+        // keep a user out, stays.
+        .filter(users::Column::TokenMinExpiry.lt(floor as u64))
+        .exec(state.db())
+        .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dto::request::users::UserPermissionsInput;
+    use crate::entity::{user_roles, users};
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
+
+    fn role() -> user_roles::Model {
+        user_roles::Model {
+            id: 7,
+            name: "operators".into(),
+            description: None,
+            stream: E::Stream::View,
+            events: E::Events::Edit,
+            control: E::Control::None,
+            monitors: E::Monitors::None,
+            groups: E::Groups::None,
+            devices: E::Devices::None,
+            snapshots: E::Snapshots::None,
+            system: E::System::Edit,
+        }
+    }
+
+    fn holder(id: u32) -> users::Model {
+        users::Model {
+            id,
+            username: format!("user{id}"),
+            password: "hash".into(),
+            name: String::new(),
+            email: String::new(),
+            phone: String::new(),
+            language: None,
+            enabled: 1,
+            stream: E::Stream::None,
+            events: E::Events::None,
+            control: E::Control::None,
+            monitors: E::Monitors::None,
+            groups: E::Groups::None,
+            devices: E::Devices::None,
+            snapshots: E::Snapshots::None,
+            system: E::System::None,
+            max_bandwidth: None,
+            token_min_expiry: 0,
+            api_enabled: 1,
+            home_view: "console".into(),
+            role_id: Some(7),
+        }
+    }
+
+    fn done() -> MockExecResult {
+        MockExecResult {
+            last_insert_id: 0,
+            rows_affected: 1,
+        }
+    }
+
+    /// Taking System away from a role must not leave its users' tokens
+    /// carrying it until they expire.
+    #[tokio::test]
+    async fn changing_a_roles_levels_revokes_its_users_tokens() {
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results(vec![vec![role()]])
+            .append_exec_results(vec![done()])
+            .append_query_results(vec![vec![role()]])
+            .append_query_results(vec![vec![holder(5), holder(6)]])
+            .append_exec_results(vec![done()])
+            .into_connection();
+        let state = AppState::for_test_with_db(db);
+        let issued = chrono::Utc::now().timestamp();
+
+        update(
+            &state,
+            7,
+            UpdateRoleRequest {
+                name: None,
+                description: None,
+                permissions: UserPermissionsInput {
+                    system: Some("None".into()),
+                    ..Default::default()
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(state.revocations.is_revoked(5, issued));
+        assert!(state.revocations.is_revoked(6, issued));
+        assert!(!state.revocations.is_revoked(1, issued));
+    }
+
+    #[tokio::test]
+    async fn renaming_a_role_revokes_nothing() {
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results(vec![vec![role()]])
+            .append_exec_results(vec![done()])
+            .append_query_results(vec![vec![role()]])
+            .into_connection();
+        let state = AppState::for_test_with_db(db);
+
+        update(
+            &state,
+            7,
+            UpdateRoleRequest {
+                name: Some("night shift".into()),
+                description: None,
+                permissions: UserPermissionsInput::default(),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(!state
+            .revocations
+            .is_revoked(5, chrono::Utc::now().timestamp()));
+    }
+
+    #[tokio::test]
+    async fn deleting_a_role_revokes_its_users_tokens() {
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results(vec![vec![holder(5)]])
+            .append_exec_results(vec![done(), done()])
+            .into_connection();
+        let state = AppState::for_test_with_db(db);
+        let issued = chrono::Utc::now().timestamp();
+
+        delete(&state, 7).await.unwrap();
+
+        assert!(state.revocations.is_revoked(5, issued));
+    }
 }

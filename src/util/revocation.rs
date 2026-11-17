@@ -37,6 +37,15 @@ impl TokenRevocations {
         }
     }
 
+    /// The user's floor, if they have one.
+    pub fn floor(&self, uid: u32) -> Option<i64> {
+        self.min_iat
+            .read()
+            .expect("revocation lock poisoned")
+            .get(&uid)
+            .copied()
+    }
+
     /// True when a token issued at `iat` for `uid` has been revoked.
     ///
     /// Strictly-before semantics: a token minted in the same second as the

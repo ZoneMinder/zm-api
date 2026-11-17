@@ -38,7 +38,7 @@ pub fn add_server_routes(router: Router<AppState>, state: AppState) -> Router<Ap
                 post(server::change_state),
             ),
         Feature::System,
-        state,
+        state.clone(),
     );
 
     // Read-only server locale (timezone + date/time formats): any authenticated
@@ -48,8 +48,9 @@ pub fn add_server_routes(router: Router<AppState>, state: AppState) -> Router<Ap
             &format!("{}/system/locale", api_prefix),
             get(server::get_locale),
         )
-        .layer(axum::middleware::from_fn(
-            crate::util::middleware::auth_middleware,
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            crate::util::middleware::authenticated_middleware,
         ));
 
     router

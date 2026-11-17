@@ -12,6 +12,23 @@ use crate::service;
 use crate::util::claim::{UserClaims, UserClaimsRequest};
 use axum::Extension;
 
+/// A token response, marked `Cache-Control: no-store` as RFC 6749 §5.1
+/// requires: a browser or proxy that kept it would hold live credentials.
+pub type Tokens = (
+    [(axum::http::HeaderName, &'static str); 2],
+    Json<TokenResponse>,
+);
+
+fn tokens(resp: TokenResponse) -> Tokens {
+    (
+        [
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+            (axum::http::header::PRAGMA, "no-cache"),
+        ],
+        Json(resp),
+    )
+}
+
 // Login user.
 #[utoipa::path(
         post,
@@ -58,13 +75,13 @@ pub async fn login(
 pub async fn refresh_token(
     State(state): State<AppState>,
     Json(req): Json<RefreshTokenRequest>,
-) -> AppResult<Json<TokenResponse>> {
+) -> AppResult<Tokens> {
     info!("Refresh token request received.");
     req.validate()?;
     match service::auth::refresh_token(&state, req).await {
         Ok(resp) => {
             info!("Successfully refreshed token.");
-            Ok(Json(resp))
+            Ok(tokens(resp))
         }
         Err(e) => {
             warn!("Unsuccessfully refresh token error: {e:?}.");
@@ -165,4 +182,20 @@ pub async fn change_password(
     Ok(Json(MessageResponse::new(
         "Password changed; please sign in again",
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::response::IntoResponse;
+
+    #[test]
+    fn a_token_response_is_never_cached() {
+        let resp = tokens(TokenResponse::new("a".into(), "r".into(), 600)).into_response();
+        assert_eq!(
+            resp.headers()[axum::http::header::CACHE_CONTROL],
+            "no-store"
+        );
+        assert_eq!(resp.headers()[axum::http::header::PRAGMA], "no-cache");
+    }
 }

@@ -190,6 +190,9 @@ pub async fn set_token_min_expiry(db: &DatabaseConnection, id: u32, min_iat: u64
     Users::update_many()
         .col_expr(Column::TokenMinExpiry, Expr::value(min_iat))
         .filter(Column::Id.eq(id))
+        // Only ever raise the floor: lowering one would bring revoked tokens
+        // back to life.
+        .filter(Column::TokenMinExpiry.lt(min_iat))
         .exec(db)
         .await?;
     Ok(())

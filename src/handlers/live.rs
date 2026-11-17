@@ -1507,12 +1507,30 @@ pub async fn stream_monitor_events(
     State(state): State<AppState>,
     Path(monitor_id): Path<u32>,
     scope: crate::service::monitor_acl::MonitorScope,
+    claims: Option<axum::Extension<crate::util::claim::UserClaims>>,
+    grant: Option<axum::Extension<crate::service::media_grant::MediaGrant>>,
 ) -> AppResult<
     axum::response::sse::Sse<
         impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
     >,
 > {
     use axum::response::sse::{Event, KeepAlive, Sse};
+    // As for the WebSocket: the token's user, or a signed link's.
+    let viewer = match (claims, grant) {
+        (Some(c), _) => Viewer {
+            uid: c.uid,
+            since: c.iat,
+        },
+        (None, Some(g)) => Viewer {
+            uid: g.uid,
+            since: chrono::Utc::now().timestamp(),
+        },
+        (None, None) => {
+            return Err(AppError::UnauthorizedError(
+                "Authentication required".to_string(),
+            ))
+        }
+    };
     crate::service::monitor::get_by_id(&state, monitor_id, &scope).await?;
     let router = state.source_router.clone().ok_or_else(|| {
         AppError::ServiceUnavailableError("live streaming is disabled".to_string())
@@ -1529,27 +1547,74 @@ pub async fn stream_monitor_events(
             .json_data(&snapshot)
             .unwrap_or_else(|_| Event::default().event("status")))
     });
-    let changes = futures_util::stream::unfold(rx, move |mut rx| async move {
-        loop {
-            match rx.recv().await {
-                Ok(change) if change.monitor_id == monitor_id => {
-                    let event = Event::default()
-                        .event(change.kind.clone())
-                        .json_data(&change)
-                        .unwrap_or_else(|_| Event::default().event(change.kind.clone()));
-                    return Some((Ok(event), rx));
-                }
-                Ok(_) => continue,
-                // A slow subscriber missed changes: say so, then carry on.
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    let event = Event::default().event("lagged").data(n.to_string());
-                    return Some((Ok(event), rx));
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
-            }
-        }
-    });
+    let changes = status_changes(
+        state,
+        viewer,
+        monitor_id,
+        rx,
+        crate::streaming::live::whep::RECHECK,
+    );
     Ok(Sse::new(futures_util::StreamExt::chain(first, changes)).keep_alive(KeepAlive::default()))
+}
+
+/// `monitor_id`'s status changes, for as long as `viewer` may see them.
+///
+/// The stream is open-ended, so the login that opened it says nothing about
+/// now: every `recheck` the viewer is checked again, and the stream ends once
+/// they have logged out, been disabled or lost the monitor.
+fn status_changes(
+    state: AppState,
+    viewer: Viewer,
+    monitor_id: u32,
+    rx: tokio::sync::broadcast::Receiver<crate::streaming::source::worker_status::StatusChange>,
+    recheck: std::time::Duration,
+) -> impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>
+{
+    use axum::response::sse::Event;
+    let mut recheck = tokio::time::interval(recheck);
+    recheck.reset();
+    futures_util::stream::unfold(
+        (rx, recheck, state),
+        move |(mut rx, mut recheck, state)| async move {
+            loop {
+                tokio::select! {
+                    r = rx.recv() => match r {
+                        Ok(change) if change.monitor_id == monitor_id => {
+                            let event = Event::default()
+                                .event(change.kind.clone())
+                                .json_data(&change)
+                                .unwrap_or_else(|_| Event::default().event(change.kind.clone()));
+                            return Some((Ok(event), (rx, recheck, state)));
+                        }
+                        Ok(_) => continue,
+                        // A slow subscriber missed changes: say so, then carry on.
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            let event = Event::default().event("lagged").data(n.to_string());
+                            return Some((Ok(event), (rx, recheck, state)));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                    },
+                    _ = recheck.tick() => {
+                        if let Err(e) = crate::service::media_grant::check_viewer(
+                            &state,
+                            viewer.uid,
+                            viewer.since,
+                            crate::util::authz::Feature::Stream,
+                            monitor_id,
+                        )
+                        .await
+                        {
+                            info!(
+                                "status stream for monitor {monitor_id}: user {} lost access ({e}); closing",
+                                viewer.uid
+                            );
+                            return None;
+                        }
+                    }
+                }
+            }
+        },
+    )
 }
 
 // ============================================================================
@@ -1596,6 +1661,33 @@ pub async fn get_live_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A status stream must not outlive its viewer's login.
+    #[tokio::test]
+    async fn a_status_stream_ends_once_its_viewer_is_logged_out() {
+        use futures_util::StreamExt;
+        let db = sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::MySql).into_connection();
+        let state = AppState::for_test_with_db(db);
+        let (tx, rx) = tokio::sync::broadcast::channel(4);
+        let since = chrono::Utc::now().timestamp();
+        state.revocations.revoke(9, since + 1);
+
+        let stream = status_changes(
+            state,
+            Viewer { uid: 9, since },
+            3,
+            rx,
+            std::time::Duration::from_millis(10),
+        );
+        let ended = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            std::pin::pin!(stream).next(),
+        )
+        .await
+        .expect("the stream must end at the first recheck");
+        assert!(ended.is_none());
+        drop(tx);
+    }
 
     #[test]
     fn live_sessions_hide_monitors_outside_the_scope() {

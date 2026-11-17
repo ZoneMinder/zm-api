@@ -182,7 +182,14 @@ pub async fn media_grant_layer(
     next: Next,
 ) -> Result<Response, AppError> {
     let Some(token) = query_param(request.uri(), media_url::PARAM) else {
-        return Ok(next.run(request).await);
+        // A login token in the URL (`?token=`, for `<img>` and `<video>`) is
+        // a URL credential too: keep its response out of shared caches.
+        let in_url = query_param(request.uri(), "token").is_some();
+        let mut response = next.run(request).await;
+        if in_url {
+            harden(response.headers_mut());
+        }
+        return Ok(response);
     };
     if !matches!(*request.method(), Method::GET | Method::HEAD) {
         return Err(AppError::PermissionDeniedError(

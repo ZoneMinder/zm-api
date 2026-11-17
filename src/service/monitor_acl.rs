@@ -454,6 +454,8 @@ pub async fn zone_row_gate(
     request: Request,
     next: Next,
 ) -> Result<Response, AppError> {
+    // Before the lookup, so a request without a valid login costs no query.
+    crate::util::authz::authenticate(&state, &request)?;
     let mut mid = None;
     if let Some(zone_id) = path_monitor_id(&params) {
         mid = repo::zones::find_by_id(state.db(), zone_id)

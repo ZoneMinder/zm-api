@@ -15,7 +15,19 @@ pub fn generate_tokens(
     user_id: u32,
     perms: UserPermissions,
 ) -> AppResult<TokenResponse> {
-    let access_token = UserClaims::new(
+    generate_tokens_issued_at(chrono::Utc::now().timestamp(), username, user_id, perms)
+}
+
+/// [`generate_tokens`] with the issue time given. See
+/// [`issue_time`](crate::service::auth::issue_time) for why login needs it.
+pub fn generate_tokens_issued_at(
+    iat: i64,
+    username: String,
+    user_id: u32,
+    perms: UserPermissions,
+) -> AppResult<TokenResponse> {
+    let access_token = UserClaims::issued_at(
+        iat,
         EXPIRE_BEARER_TOKEN_SECS,
         username.clone(),
         user_id,
@@ -23,7 +35,8 @@ pub fn generate_tokens(
         TokenType::Access,
     )
     .encode(&ACCESS_TOKEN_ENCODE_KEY)?;
-    let refresh_token = UserClaims::new(
+    let refresh_token = UserClaims::issued_at(
+        iat,
         EXPIRE_REFRESH_TOKEN_SECS,
         username,
         user_id,
