@@ -35,8 +35,34 @@ pub async fn login(state: &AppState, req: LoginRequest) -> AppResult<TokenRespon
 
     // The user's own levels raised by their role's (#143).
     let perms = crate::util::authz::effective_permissions(&state.db, &user).await?;
-    let resp = token::generate_tokens(user.username, user.id, perms)?;
+    let floor = state
+        .revocations
+        .floor(user.id)
+        .unwrap_or(0)
+        .max(user.token_min_expiry as i64);
+    let iat = issue_time(chrono::Utc::now().timestamp(), floor);
+    let resp = token::generate_tokens_issued_at(iat, user.username, user.id, perms)?;
     Ok(resp)
+}
+
+/// When a token minted now, for a user whose revocation floor is `floor`,
+/// should say it was issued.
+///
+/// A revocation sets the floor to the next second, so that it also catches
+/// tokens minted earlier in the second it happens in. A login later in that
+/// same second would then be handed a token that is already revoked: log out
+/// and straight back in, or sign in just as an administrator changes your
+/// role, and the first request is a 401. Such a token is dated at the floor
+/// instead, one second ahead, which no check minds.
+///
+/// A floor further ahead is an administrator keeping the user out, and is
+/// left to do that.
+pub fn issue_time(now: i64, floor: i64) -> i64 {
+    if floor == now + 1 {
+        floor
+    } else {
+        now
+    }
 }
 
 pub async fn refresh_token(state: &AppState, req: RefreshTokenRequest) -> AppResult<TokenResponse> {
@@ -133,6 +159,53 @@ pub async fn stock_admin_login_works(users: &[crate::entity::users::Model]) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_token_minted_in_the_second_of_a_revocation_is_not_born_revoked() {
+        let now = 1_700_000_000;
+        // No floor, or an old one: issued now.
+        assert_eq!(issue_time(now, 0), now);
+        assert_eq!(issue_time(now, now - 30), now);
+        assert_eq!(issue_time(now, now), now);
+        // Revoked this second: dated at the floor, so it is not caught by it.
+        assert_eq!(issue_time(now, now + 1), now + 1);
+        // An administrator's lockout further ahead still holds.
+        assert_eq!(issue_time(now, now + 3600), now);
+    }
+
+    /// Log out and straight back in: the new token must work.
+    #[tokio::test]
+    async fn a_login_right_after_a_revocation_gets_a_working_token() {
+        let plain = "secret".to_string();
+        let hashed = crate::util::password::hash(plain.clone()).await.unwrap();
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results::<crate::entity::users::Model, _, _>(vec![vec![mk_user(
+                "alice", &hashed,
+            )]])
+            .into_connection();
+        let state = AppState::for_test_with_db(db);
+        // As logout and a role change do: the floor is the next second. The
+        // password check may run into that second; the token works either way.
+        let before = chrono::Utc::now().timestamp();
+        state.revocations.revoke(1, before + 1);
+
+        let resp = login(
+            &state,
+            LoginRequest {
+                username: "alice".into(),
+                password: plain,
+            },
+        )
+        .await
+        .unwrap();
+        let claims = UserClaims::decode_access(&resp.access_token).unwrap();
+        assert!(
+            !state.revocations.is_revoked(claims.uid, claims.iat),
+            "iat {} against a floor of {}",
+            claims.iat,
+            before + 1
+        );
+    }
 
     #[tokio::test]
     async fn the_stock_admin_login_is_noticed() {

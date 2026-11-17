@@ -79,10 +79,28 @@ impl UserClaims {
         perms: UserPermissions,
         typ: TokenType,
     ) -> Self {
-        let now = Utc::now().timestamp();
+        Self::issued_at(
+            Utc::now().timestamp(),
+            duration,
+            username,
+            user_id,
+            perms,
+            typ,
+        )
+    }
+
+    /// [`new`](Self::new) with the issue time given.
+    pub fn issued_at(
+        iat: i64,
+        duration: Duration,
+        username: String,
+        user_id: u32,
+        perms: UserPermissions,
+        typ: TokenType,
+    ) -> Self {
         Self {
-            iat: now,
-            exp: now + (duration.as_secs() as i64),
+            iat,
+            exp: iat + (duration.as_secs() as i64),
             typ,
             user: username,
             uid: user_id,
