@@ -137,8 +137,9 @@ pub struct LlHlsQuery {
     responses(
         (status = 200, description = "Live streaming started", body = StartLiveResponse),
         (status = 400, description = "Bad request", body = AppResponseError),
+        (status = 404, description = "Monitor not found, deleted, or not capturing", body = AppResponseError),
         (status = 409, description = "Session already exists", body = AppResponseError),
-        (status = 503, description = "Service unavailable", body = AppResponseError)
+        (status = 503, description = "Live view not configured, or the monitor's capture is starting (see Retry-After)", body = AppResponseError)
     ),
     security(
         ("jwt" = [])
@@ -160,28 +161,23 @@ pub async fn start_live_stream(
         enable_webrtc: request.enable_webrtc,
     };
 
-    coordinator
-        .start_session(monitor_id, config.clone())
-        .await
-        .map_err(|e| match e {
+    if let Err(e) = coordinator.start_session(monitor_id, config.clone()).await {
+        return Err(match e {
             CoordinatorError::SessionExists(_) => AppError::ConflictError(format!(
                 "Live stream already exists for monitor {}",
                 monitor_id
             )),
             CoordinatorError::SourceNotAvailable(_) => {
-                AppError::NotFoundError(crate::error::Resource {
-                    resource_type: crate::error::ResourceType::Monitor,
-                    details: vec![
-                        ("monitor_id".to_string(), monitor_id.to_string()),
-                        (
-                            "reason".to_string(),
-                            "stream socket not available".to_string(),
-                        ),
-                    ],
-                })
+                missing_source(
+                    &state,
+                    monitor_id,
+                    "stream socket not available".to_string(),
+                )
+                .await
             }
             _ => AppError::BadRequestError(format!("Failed to start live stream: {}", e)),
-        })?;
+        });
+    }
 
     let base_url = crate::configure::server::public_path(&format!("/api/v3/live/{}", monitor_id));
 
@@ -1300,6 +1296,41 @@ async fn handle_webrtc_websocket(
 // Monitor Snapshot
 // ============================================================================
 
+/// How long a client should wait before asking again while a monitor's zmc
+/// (re)starts. Restarts measured 1 to 9 s (#206).
+const SOURCE_RETRY_AFTER_SECS: u64 = 2;
+
+/// The answer when a monitor's stream socket isn't there, or no keyframe
+/// came through it in time. A monitor that exists, captures, and is this
+/// host's has a zmc starting or restarting, which happens on every edit and
+/// run-state change: 503 with Retry-After, so a client polls again rather
+/// than dropping the camera (#206). A monitor that doesn't exist, is
+/// deleted, doesn't capture, or that another server records (its socket is
+/// never here) stays a 404.
+async fn missing_source(state: &AppState, monitor_id: u32, reason: String) -> AppError {
+    use crate::entity::sea_orm_active_enums::Capturing;
+    let capturing = matches!(
+        crate::repo::monitors::find_by_id(state.db(), monitor_id).await,
+        Ok(Some(m)) if m.deleted == 0
+            && m.capturing != Capturing::None
+            && crate::service::monitor_daemons::runs_here(state.server_id, m.server_id)
+    );
+    if capturing {
+        AppError::RetryLaterError(
+            format!("monitor {monitor_id}'s capture is starting; try again shortly"),
+            SOURCE_RETRY_AFTER_SECS,
+        )
+    } else {
+        AppError::NotFoundError(crate::error::Resource {
+            resource_type: crate::error::ResourceType::Monitor,
+            details: vec![
+                ("monitor_id".to_string(), monitor_id.to_string()),
+                ("reason".to_string(), reason),
+            ],
+        })
+    }
+}
+
 /// Get a JPEG snapshot from a live monitor
 #[utoipa::path(
     get,
@@ -1311,8 +1342,8 @@ async fn handle_webrtc_websocket(
     ),
     responses(
         (status = 200, description = "JPEG snapshot image", content_type = "image/jpeg"),
-        (status = 404, description = "Monitor not found", body = AppResponseError),
-        (status = 503, description = "Service unavailable", body = AppResponseError)
+        (status = 404, description = "Monitor not found, deleted, or not capturing", body = AppResponseError),
+        (status = 503, description = "Live view not configured, or the monitor's capture is starting (see Retry-After)", body = AppResponseError)
     ),
     security(("jwt" = []))
 )]
@@ -1324,21 +1355,18 @@ pub async fn get_monitor_snapshot(
         AppError::ServiceUnavailableError("Snapshot service not configured".to_string())
     })?;
 
-    let jpeg = service.get_snapshot(monitor_id).await.map_err(|e| {
-        use crate::streaming::snapshot::SnapshotError;
-        match e {
-            SnapshotError::SourceNotAvailable(id) | SnapshotError::KeyframeTimeout(id) => {
-                AppError::NotFoundError(crate::error::Resource {
-                    resource_type: crate::error::ResourceType::Monitor,
-                    details: vec![
-                        ("monitor_id".to_string(), id.to_string()),
-                        ("reason".to_string(), e.to_string()),
-                    ],
-                })
-            }
-            _ => AppError::InternalServerError(e.to_string()),
+    let jpeg = match service.get_snapshot(monitor_id).await {
+        Ok(jpeg) => jpeg,
+        Err(e) => {
+            use crate::streaming::snapshot::SnapshotError;
+            return Err(match e {
+                SnapshotError::SourceNotAvailable(id) | SnapshotError::KeyframeTimeout(id) => {
+                    missing_source(&state, id, e.to_string()).await
+                }
+                _ => AppError::InternalServerError(e.to_string()),
+            });
         }
-    })?;
+    };
 
     // Match what ZoneMinder's own image view serves: the still comes back
     // already rotated, so a client can size and render it directly (GH #61).

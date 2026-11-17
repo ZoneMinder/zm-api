@@ -6,35 +6,9 @@
 version = 2
 # RUSTSEC advisory IDs to ignore, with a justification comment each.
 ignore = [
-    # rsa "Marvin Attack" timing side-channel. No fixed `rsa` release exists and
-    # the crate is pulled in transitively (and unavoidably) by sqlx-mysql for the
-    # MariaDB/MySQL auth handshake — it is not used for any attacker-facing crypto
-    # in zm-api. Exploitation requires timing many RSA private-key operations;
-    # mitigated by a local/TLS database connection. Revisit when sqlx drops rsa.
-    "RUSTSEC-2023-0071",
-    # atomic-polyfill unmaintained. Deep transitive build-dep only
-    # (garde -> phonenumber -> postcard -> heapless), no safe upgrade available.
-    "RUSTSEC-2023-0089",
-    # rkyv 0.7.46 out-of-bounds read. The fix is rkyv >=0.8.17, but 0.7.46 is
-    # pulled transitively by the webrtc/dtls stack, which pins the 0.7 line; the
-    # directly-reachable rkyv (0.8.x) is already upgraded to 0.8.17. rkyv is not
-    # used to deserialize attacker-controlled archives in zm-api. Revisit when
-    # webrtc bumps rkyv to 0.8.
-    "RUSTSEC-2026-0235",
     # paste unmaintained. Build-time-only proc-macro helper, pulled transitively
     # (no runtime code); no maintained drop-in replacement across the tree.
     "RUSTSEC-2024-0436",
-    # proc-macro-error2 unmaintained. Build-time-only derive-macro dependency;
-    # unmaintained but not a vulnerability. Revisit if a maintained fork lands.
-    "RUSTSEC-2026-0173",
-    # zip < 9: symlink targets, Unix modes through symlinks and SUID/SGID bits
-    # preserved on extraction. Build-dependency of utoipa-swagger-ui only: its
-    # build script unpacks the Swagger UI release it ships, on the build host,
-    # and zip is not in the binary. utoipa-swagger-ui 10.0.1 pins zip ^8.6;
-    # its master is on 9.0. Drop these once a release with zip 9 ships (#164).
-    "RUSTSEC-2026-0367",
-    "RUSTSEC-2026-0368",
-    "RUSTSEC-2026-0369",
 ]
 
 [bans]

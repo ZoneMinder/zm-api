@@ -320,7 +320,11 @@ fn apply_common_middleware(
                     burst,
                     mw.trust_proxy_headers,
                 );
-                Some(GovernorLayer::new(conf))
+                Some(crate::util::rate_limit::ExemptLayer::new(
+                    GovernorLayer::new(conf)
+                        .error_handler(crate::util::rate_limit::too_many_requests),
+                    crate::util::rate_limit::is_live_media_fetch,
+                ))
             }
             None => {
                 tracing::warn!("Invalid rate-limit configuration; global rate limiting disabled");
@@ -410,7 +414,10 @@ pub fn create_router_app(state: AppState) -> Router {
                     mw.auth_rate_limit_burst,
                     mw.trust_proxy_headers,
                 );
-                routes.layer(GovernorLayer::new(conf))
+                routes.layer(
+                    GovernorLayer::new(conf)
+                        .error_handler(crate::util::rate_limit::too_many_requests),
+                )
             }
             None => routes,
         }
@@ -551,6 +558,15 @@ pub fn create_router_app(state: AppState) -> Router {
         Feature::Stream,
     );
 
+    // The watch page's alarm sound: whoever may watch a monitor may hear it.
+    let sound_routes = protect(
+        Router::new().route(
+            "/api/v3/system/sounds/{name}",
+            axum::routing::get(crate::handlers::sounds::get_sound),
+        ),
+        Feature::Stream,
+    );
+
     let config_routes = protect(configs::add_config_routes(Router::new()), Feature::System);
     let log_routes = protect(logs::add_log_routes(Router::new()), Feature::System);
     // AI object-detection registry: admin-tier, matching ZoneMinder's own
@@ -612,6 +628,7 @@ pub fn create_router_app(state: AppState) -> Router {
     // own auth, which then honours the grant (see service::media_grant).
     let streaming = Router::new()
         .merge(live_routes) // Live streaming (unified)
+        .merge(sound_routes) // Alarm sounds: byte ranges for <audio>
         .merge(events_playback_routes) // Event playback
         .merge(snapshot_routes)
         .merge(snapshot_event_routes)

@@ -50,7 +50,26 @@ fn runs(capturing: &Capturing, t: &MonitorType, deleted: i8) -> bool {
     *capturing != Capturing::None && *t != MonitorType::WebSite && deleted == 0
 }
 
+/// Whether this host's zmdc.pl runs a monitor's daemons, by ZoneMinder's
+/// rule (`Monitor::zmcControl`): every monitor on a host with no server id,
+/// else only the monitors whose `ServerId` is this host's. Telling this
+/// zmdc.pl to start another server's monitor would capture the camera
+/// twice (#229).
+pub fn runs_here(this_server: Option<u32>, monitor_server: Option<u32>) -> bool {
+    match this_server {
+        None => true,
+        Some(here) => monitor_server == Some(here),
+    }
+}
+
 async fn zmdc(state: &AppState, command: &str, m: &MonitorModel) {
+    if !runs_here(state.server_id, m.server_id) {
+        info!(
+            "monitor {}: zmdc {command} skipped, Servers.Id {:?} runs its daemons",
+            m.id, m.server_id
+        );
+        return;
+    }
     let socket = state.config.daemon.socket_file();
     for spec in daemon_specs(m) {
         match zmdc_client::request(&socket, command, Some(&spec)).await {
@@ -125,6 +144,21 @@ pub async fn set_state(state: &AppState, m: &MonitorModel, action: Action) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_this_servers_monitors_go_to_its_zmdc() {
+        assert!(runs_here(None, None));
+        assert!(
+            runs_here(None, Some(2)),
+            "no server id: everything is local"
+        );
+        assert!(runs_here(Some(1), Some(1)));
+        assert!(!runs_here(Some(1), Some(2)));
+        // ZoneMinder's zmcControl: with a server id, a monitor with no
+        // ServerId isn't this host's either.
+        assert!(!runs_here(Some(1), None));
+        assert!(!runs_here(Some(1), Some(0)));
+    }
 
     #[test]
     fn specs_are_zmc_then_zmcontrol_for_a_controllable_monitor() {

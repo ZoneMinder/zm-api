@@ -361,6 +361,7 @@ where
 pub async fn get_counts_by_monitor(
     state: &AppState,
     hours_back: i64,
+    archived: Option<bool>,
     monitor_filter: Option<&[u32]>,
 ) -> Result<Vec<(u32, u64)>, DbErr> {
     use sea_orm::sea_query::{Expr, Query};
@@ -378,6 +379,9 @@ pub async fn get_counts_by_monitor(
         .from(events::Entity)
         .and_where(Expr::col(events::Column::StartDateTime).gte(time_boundary_str))
         .group_by_col(events::Column::MonitorId);
+    if let Some(archived) = archived {
+        select.and_where(Expr::col(events::Column::Archived).eq(u8::from(archived)));
+    }
     // Row-level ACL: restrict the aggregation to permitted monitors.
     if let Some(ids) = monitor_filter {
         select.and_where(Expr::col(events::Column::MonitorId).is_in(ids.iter().copied()));

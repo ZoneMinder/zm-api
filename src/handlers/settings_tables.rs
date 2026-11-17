@@ -141,6 +141,27 @@ pub async fn get_menu_item(
     Ok(Json(svc::get_menu_item(&state, id).await?))
 }
 
+/// Reset the menu to a fresh install's
+///
+/// Deletes every menu item and inserts ZoneMinder's default rows (Console
+/// through Map, Watch included, as `zm_create.sql` seeds them), in one
+/// transaction. Returns the new list.
+#[utoipa::path(
+    post,
+    path = "/api/v3/menu-items/reset",
+    responses(
+        (status = 200, description = "The default menu items", body = Vec<MenuItemResponse>),
+        (status = 403, description = "Needs System Edit", body = crate::error::AppResponseError)
+    ),
+    tag = "System",
+    security(("jwt" = []))
+)]
+pub async fn reset_menu_items(
+    State(state): State<AppState>,
+) -> AppResult<Json<Vec<MenuItemResponse>>> {
+    Ok(Json(svc::reset_menu_items(&state).await?))
+}
+
 /// Create a menu item
 #[utoipa::path(
     post,

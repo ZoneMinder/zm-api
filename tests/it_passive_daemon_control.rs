@@ -102,3 +102,153 @@ async fn daemon_and_system_status_come_from_zmdc() {
     assert_eq!(body["daemons"][0]["pid"], 4321);
     assert!(seen.lock().unwrap().iter().all(|m| m == "status"));
 }
+
+/// On a multi-server install this host's zmdc.pl runs only the monitors
+/// whose ServerId is this host; another server's are left to it (#229).
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn another_servers_monitor_is_left_to_that_server() {
+    use sea_orm::{ActiveModelTrait, Set};
+    let tmp = tempfile::tempdir().unwrap();
+    let seen = fake_zmdc(tmp.path(), "");
+    let dir = tmp.path().to_path_buf();
+    let app = TestApp::spawn_with(move |state| {
+        let mut config = (*state.config).clone();
+        config.daemon.socket_path = dir;
+        config.daemon.socket_name = "zmdc.sock".to_string();
+        state.config = Arc::new(config);
+        state.server_id = Some(1);
+    })
+    .await;
+    let token = superuser_token();
+
+    let mut ids = Vec::new();
+    let mut guards = Vec::new();
+    for server in [1u32, 2] {
+        let m = insert_monitor(&app.db, "MultiSrv").await.unwrap();
+        guards.push(RowGuard::monitor(m.id));
+        let mut am: zm_api::entity::monitors::ActiveModel = m.clone().into();
+        am.server_id = Set(Some(server));
+        am.update(&app.db).await.unwrap();
+        ids.push(m.id);
+    }
+    for id in &ids {
+        let resp = app
+            .patch_json(
+                &format!("/api/v3/monitors/{id}/state"),
+                &token,
+                &json!({ "state": "stop" }),
+            )
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK, "{}", resp.text());
+    }
+    let seen = seen.lock().unwrap().clone();
+    assert!(
+        seen.contains(&format!("stop;zmc;-m;{}", ids[0])),
+        "{seen:?}"
+    );
+    assert!(
+        !seen.iter().any(|m| m.contains(&format!("-m;{}", ids[1]))),
+        "server 2's monitor went to server 1's zmdc: {seen:?}"
+    );
+}
+
+/// Applying a run state in passive mode moves the daemons of the monitors
+/// it changes, as an edit does, instead of only rewriting their rows (#204).
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn a_run_state_moves_the_daemons_it_changes() {
+    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+    use zm_api::entity::states;
+    let tmp = tempfile::tempdir().unwrap();
+    let seen = fake_zmdc(tmp.path(), "");
+    let app = passive_app(tmp.path()).await;
+    let token = superuser_token();
+
+    let off = insert_monitor(&app.db, "StateOff").await.unwrap();
+    let _g1 = RowGuard::monitor(off.id);
+    let same = insert_monitor(&app.db, "StateSame").await.unwrap();
+    let _g2 = RowGuard::monitor(same.id);
+    let as_is = |m: &zm_api::entity::monitors::Model| {
+        format!(
+            "{}:{}:{}:{}",
+            m.id,
+            serde_json::to_value(&m.capturing)
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            serde_json::to_value(&m.analysing)
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            serde_json::to_value(&m.recording)
+                .unwrap()
+                .as_str()
+                .unwrap(),
+        )
+    };
+
+    // Put the active-state flags back afterwards: applying a state moves them.
+    let was_active: Vec<u32> = states::Entity::find()
+        .filter(states::Column::IsActive.eq(1u8))
+        .all(&app.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    let name = common::fixtures::unique_name("Off");
+    let st = states::ActiveModel {
+        name: Set(name.clone()),
+        definition: Set(format!("{}:None:None:None,{}", off.id, as_is(&same))),
+        is_active: Set(0),
+        ..Default::default()
+    }
+    .insert(&app.db)
+    .await
+    .unwrap();
+    let st_id = st.id;
+    let _gs = RowGuard::new(format!("States#{st_id}"), move |db| async move {
+        let _ = states::Entity::delete_by_id(st_id).exec(&db).await;
+        for id in was_active {
+            let _ = states::ActiveModel {
+                id: Set(id),
+                is_active: Set(1),
+                ..Default::default()
+            }
+            .update(&db)
+            .await;
+        }
+    });
+
+    let resp = app
+        .post_json(
+            "/api/v3/system/state",
+            &token,
+            &json!({ "state_name": name }),
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK, "{}", resp.text());
+    // The restarts run after the answer.
+    let stop = format!("stop;zmc;-m;{}", off.id);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !seen.lock().unwrap().contains(&stop) && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let seen = seen.lock().unwrap().clone();
+    assert!(
+        seen.contains(&stop),
+        "the monitor turned off was stopped: {seen:?}"
+    );
+    assert!(
+        !seen
+            .iter()
+            .any(|m| m.contains(&format!("zmc;-m;{}", off.id)) && m.starts_with("start")),
+        "and not started again: {seen:?}"
+    );
+    assert!(
+        !seen.iter().any(|m| m.contains(&format!("-m;{}", same.id))),
+        "an unchanged monitor is left alone: {seen:?}"
+    );
+}

@@ -46,6 +46,10 @@ pub enum AppError {
     InternalServerError(String),
     #[error("service unavailable: {0}")]
     ServiceUnavailableError(String),
+    /// A 503 for something that will be back shortly, with a Retry-After of
+    /// this many seconds.
+    #[error("service unavailable: {0}")]
+    RetryLaterError(String, u64),
 
     #[error(transparent)]
     #[schema(value_type = String, example = "Validation failed")]
@@ -226,6 +230,12 @@ impl AppError {
                 "SERVICE_UNAVAILABLE_ERROR".to_string(),
                 None,
                 vec![],
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            RetryLaterError(_err, secs) => (
+                "SERVICE_UNAVAILABLE_ERROR".to_string(),
+                None,
+                vec![("retry_after_secs".to_string(), secs.to_string())],
                 StatusCode::SERVICE_UNAVAILABLE,
             ),
             NotAvailableError(resource) => (
@@ -435,8 +445,19 @@ impl AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
+        let retry_after = match &self {
+            AppError::RetryLaterError(_, secs) => Some(*secs),
+            _ => None,
+        };
         let (status_code, body) = self.response();
-        (status_code, Json(body)).into_response()
+        let mut response = (status_code, Json(body)).into_response();
+        if let Some(secs) = retry_after {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from(secs),
+            );
+        }
+        response
     }
 }
 

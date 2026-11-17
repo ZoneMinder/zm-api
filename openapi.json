@@ -3675,6 +3675,18 @@
               "type": "integer",
               "format": "int64"
             }
+          },
+          {
+            "name": "archived",
+            "in": "query",
+            "description": "`false` leaves archived events out, `true` counts only them; absent\ncounts both. ZoneMinder's `consoleEvents/<interval>/Archived=:0`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {
@@ -7705,6 +7717,16 @@
               }
             }
           },
+          "404": {
+            "description": "Monitor not found, deleted, or not capturing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Session already exists",
             "content": {
@@ -7716,7 +7738,7 @@
             }
           },
           "503": {
-            "description": "Service unavailable",
+            "description": "Live view not configured, or the monitor's capture is starting (see Retry-After)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9014,6 +9036,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MenuItemResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "jwt": []
+          }
+        ]
+      }
+    },
+    "/api/v3/menu-items/reset": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Reset the menu to a fresh install's",
+        "description": "Deletes every menu item and inserts ZoneMinder's default rows (Console\nthrough Map, Watch included, as `zm_create.sql` seeds them), in one\ntransaction. Returns the new list.",
+        "operationId": "reset_menu_items",
+        "responses": {
+          "200": {
+            "description": "The default menu items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MenuItemResponse"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Needs System Edit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
                 }
               }
             }
@@ -12274,7 +12346,7 @@
             }
           },
           "404": {
-            "description": "Monitor not found",
+            "description": "Monitor not found, deleted, or not capturing",
             "content": {
               "application/json": {
                 "schema": {
@@ -12284,7 +12356,7 @@
             }
           },
           "503": {
-            "description": "Service unavailable",
+            "description": "Live view not configured, or the monitor's capture is starting (see Retry-After)",
             "content": {
               "application/json": {
                 "schema": {
@@ -17122,6 +17194,432 @@
         ]
       }
     },
+    "/api/v3/roles/{id}/groups-permissions": {
+      "get": {
+        "tags": [
+          "Roles"
+        ],
+        "summary": "List a role's per-group permissions",
+        "operationId": "listRoleGroupPermissions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Role ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The role's group rows; target_id is the group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RolePermissionResponse"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "jwt": []
+          }
+        ]
+      }
+    },
+    "/api/v3/roles/{id}/groups-permissions/{group_id}": {
+      "put": {
+        "tags": [
+          "Roles"
+        ],
+        "summary": "Set a role's permission on a group",
+        "operationId": "setRoleGroupPermission",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Role ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetRolePermissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The row as saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RolePermissionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not Inherit, None, View or Edit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such role or group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "jwt": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Roles"
+        ],
+        "summary": "Clear a role's permission on a group",
+        "operationId": "clearRoleGroupPermission",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Role ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "404": {
+            "description": "The role has no row for that group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "jwt": []
+          }
+        ]
+      }
+    },
+    "/api/v3/roles/{id}/monitors-permissions": {
+      "get": {
+        "tags": [
+          "Roles"
+        ],
+        "summary": "List a role's per-monitor permissions",
+        "operationId": "listRoleMonitorPermissions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Role ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The role's monitor rows; target_id is the monitor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RolePermissionResponse"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "jwt": []
+          }
+        ]
+      }
+    },
+    "/api/v3/roles/{id}/monitors-permissions/{monitor_id}": {
+      "put": {
+        "tags": [
+          "Roles"
+        ],
+        "summary": "Set a role's permission on a monitor",
+        "operationId": "setRoleMonitorPermission",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Role ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "monitor_id",
+            "in": "path",
+            "description": "Monitor ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetRolePermissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The row as saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RolePermissionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not Inherit, None, View or Edit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such role or monitor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "jwt": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Roles"
+        ],
+        "summary": "Clear a role's permission on a monitor",
+        "operationId": "clearRoleMonitorPermission",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Role ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "monitor_id",
+            "in": "path",
+            "description": "Monitor ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed; the role's Monitors level applies"
+          },
+          "404": {
+            "description": "The role has no row for that monitor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "jwt": []
+          }
+        ]
+      }
+    },
     "/api/v3/search": {
       "get": {
         "tags": [
@@ -19348,6 +19846,86 @@
         ]
       }
     },
+    "/api/v3/system/sounds/{name}": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "An alarm sound",
+        "description": "- A file from ZoneMinder's sounds directory (`ZM_DIR_SOUNDS`), for the\n  watch page to play on alarm when `ZM_WEB_SOUND_ON_ALARM` is on; the\n  option `ZM_WEB_ALARM_SOUND` names the file.\n- Takes `?token=` as well as the header, so an `<audio>` element can load it.",
+        "operationId": "get_sound",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "File name in the sounds directory, e.g. snap.ogg",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The sound file",
+            "content": {
+              "audio/ogg": {}
+            }
+          },
+          "206": {
+            "description": "The byte range asked for with Range",
+            "content": {
+              "audio/ogg": {}
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Needs Stream View",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such sound",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "jwt": []
+          }
+        ]
+      }
+    },
     "/api/v3/system/startup": {
       "post": {
         "tags": [
@@ -21412,6 +21990,24 @@
             "properties": {
               "ServiceUnavailableError": {
                 "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A 503 for something that will be back shortly, with a Retry-After of\nthis many seconds.",
+            "required": [
+              "RetryLaterError"
+            ],
+            "properties": {
+              "RetryLaterError": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                },
+                "description": "A 503 for something that will be back shortly, with a Retry-After of\nthis many seconds.",
+                "maxItems": 2,
+                "minItems": 2
               }
             }
           },
@@ -33014,6 +33610,38 @@
           "Event"
         ]
       },
+      "RolePermissionResponse": {
+        "type": "object",
+        "description": "One row of a role's per-monitor or per-group permissions. `target_id`\nis the monitor's or the group's id, as the route says.",
+        "required": [
+          "id",
+          "role_id",
+          "target_id",
+          "permission"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "permission": {
+            "type": "string",
+            "description": "`Inherit`, `None`, `View` or `Edit`.",
+            "example": "View"
+          },
+          "role_id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "target_id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "RoleResponse": {
         "type": "object",
         "description": "A ZoneMinder 1.39 role. A user holding it (`role_id`) gets, per feature,\nthe higher of their own level and the role's.",
@@ -33473,6 +34101,20 @@
         "properties": {
           "status": {
             "type": "string"
+          }
+        }
+      },
+      "SetRolePermissionRequest": {
+        "type": "object",
+        "description": "The permission to give a role on one monitor or group.",
+        "required": [
+          "permission"
+        ],
+        "properties": {
+          "permission": {
+            "type": "string",
+            "description": "`Inherit`, `None`, `View` or `Edit`.",
+            "example": "View"
           }
         }
       },

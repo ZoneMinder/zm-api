@@ -9,7 +9,9 @@ use tracing::{debug, instrument};
 
 use crate::{
     dto::{
-        request::events::{EventCreateRequest, EventQueryParams, EventUpdateRequest},
+        request::events::{
+            EventCountsByMonitorQuery, EventCreateRequest, EventQueryParams, EventUpdateRequest,
+        },
         response::events::{
             EventCountsByMonitorResponse, EventCountsResponse, EventResponse,
             PaginatedEventsResponse,
@@ -241,7 +243,8 @@ pub async fn get_event_counts(
     operation_id = "getEventCountsByMonitor",
     tag = "Events",
     params(
-        ("hours" = i64, Path, description = "Number of hours to count back from now")
+        ("hours" = i64, Path, description = "Number of hours to count back from now"),
+        EventCountsByMonitorQuery
     ),
     responses(
         (status = 200, description = "Event counts grouped by monitor", body = EventCountsByMonitorResponse),
@@ -257,9 +260,11 @@ pub async fn get_event_counts(
 pub async fn get_event_counts_by_monitor(
     State(state): State<AppState>,
     Path(hours): Path<i64>,
+    Query(query): Query<EventCountsByMonitorQuery>,
     scope: MonitorScope,
 ) -> AppResult<Json<EventCountsByMonitorResponse>> {
-    let counts = service::events::get_event_counts_by_monitor(&state, hours, &scope).await?;
+    let counts =
+        service::events::get_event_counts_by_monitor(&state, hours, query.archived, &scope).await?;
 
     Ok(Json(counts))
 }

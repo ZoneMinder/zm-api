@@ -400,13 +400,15 @@ pub async fn get_event_counts(
 pub async fn get_event_counts_by_monitor(
     state: &AppState,
     hours: i64,
+    archived: Option<bool>,
     scope: &MonitorScope,
 ) -> AppResult<crate::dto::response::events::EventCountsByMonitorResponse> {
     use crate::dto::response::events::{EventCountsByMonitorResponse, MonitorEventCount};
 
     check_count_hours(hours)?;
     let filter = scope.visible_ids(Level::View);
-    let counts = events_repo::get_counts_by_monitor(state, hours, filter.as_deref()).await?;
+    let counts =
+        events_repo::get_counts_by_monitor(state, hours, archived, filter.as_deref()).await?;
 
     let monitor_counts = counts
         .into_iter()

@@ -96,9 +96,12 @@ jobs:
           - distro: fedora
             image: fedora:44
             install: dnf -y install
+            openssl: "'pkgconfig(openssl)'"
           - distro: opensuse
             image: opensuse/tumbleweed:latest
             install: zypper --non-interactive install
+            # pkgconfig(openssl) can resolve to LibreSSL; see the spec.
+            openssl: libopenssl-devel
     runs-on: ubuntu-latest
     container: ${{ matrix.image }}
     steps:
@@ -108,7 +111,7 @@ jobs:
           ${{ matrix.install }} \
             git tar gzip rpm-build rust cargo gcc systemd-rpm-macros \
             clang clang-devel \
-            'pkgconfig(openssl)' \
+            ${{ matrix.openssl }} \
             'pkgconfig(libavcodec)' 'pkgconfig(libavformat)' \
             'pkgconfig(libavutil)' 'pkgconfig(libavfilter)' \
             'pkgconfig(libavdevice)' 'pkgconfig(libswscale)' \

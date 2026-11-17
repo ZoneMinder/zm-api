@@ -18,7 +18,10 @@ use std::sync::Arc;
 
 use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, Request};
+use axum::http::{HeaderValue, Method, Response};
+use futures::future::BoxFuture;
 use ipnet::IpNet;
+use tower::{Layer, Service, ServiceExt};
 use tower_governor::errors::GovernorError;
 use tower_governor::key_extractor::KeyExtractor;
 
@@ -132,6 +135,180 @@ impl KeyExtractor for IpKeyExtractor {
             .map(|ConnectInfo(a)| a.ip())
             .ok_or(GovernorError::UnableToExtractKey)?;
         Ok(self.client_ip(peer, req.headers()))
+    }
+}
+
+/// HLS playlist, init and segment fetches for a live session. A player
+/// makes about one a second per tile, so a four-tile montage spent the
+/// general budget in under a minute (#257). The session already gates them,
+/// and starting one goes through the limiter. `hls/link` mints a signed URL
+/// and stays limited.
+pub fn is_live_media_fetch(method: &Method, path: &str) -> bool {
+    if method != Method::GET {
+        return false;
+    }
+    let parts: Vec<&str> = path.trim_end_matches('/').split('/').collect();
+    match parts.as_slice() {
+        [.., "live", id, "hls", file] => {
+            id.parse::<u32>().is_ok() && !file.is_empty() && *file != "link"
+        }
+        _ => false,
+    }
+}
+
+/// The limiter's 429. tower_governor puts the wait in whole seconds,
+/// rounded down, so with one token a second `retry-after` read 0 and a
+/// client that obeyed it came straight back (#257). Round up instead.
+pub fn too_many_requests(err: GovernorError) -> Response<axum::body::Body> {
+    let mut response: Response<axum::body::Body> = err.clone().into();
+    if let GovernorError::TooManyRequests { wait_time, .. } = err {
+        let secs = HeaderValue::from(wait_time.saturating_add(1));
+        response.headers_mut().insert("retry-after", secs.clone());
+        response.headers_mut().insert("x-ratelimit-after", secs);
+    }
+    response
+}
+
+/// Applies a layer (the rate limiter) to every request except the ones
+/// `exempt` picks out, which go straight to the inner service.
+#[derive(Clone)]
+pub struct ExemptLayer<L> {
+    layer: L,
+    exempt: fn(&Method, &str) -> bool,
+}
+
+impl<L> ExemptLayer<L> {
+    pub fn new(layer: L, exempt: fn(&Method, &str) -> bool) -> Self {
+        Self { layer, exempt }
+    }
+}
+
+impl<L, S> Layer<S> for ExemptLayer<L>
+where
+    L: Layer<S>,
+    S: Clone,
+{
+    type Service = Exempt<L::Service, S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        Exempt {
+            limited: self.layer.layer(inner.clone()),
+            plain: inner,
+            exempt: self.exempt,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Exempt<A, B> {
+    limited: A,
+    plain: B,
+    exempt: fn(&Method, &str) -> bool,
+}
+
+impl<A, B, ReqBody> Service<Request<ReqBody>> for Exempt<A, B>
+where
+    A: Service<Request<ReqBody>> + Clone + Send + 'static,
+    A::Future: Send + 'static,
+    B: Service<Request<ReqBody>, Response = A::Response, Error = A::Error> + Clone + Send + 'static,
+    B::Future: Send + 'static,
+    ReqBody: Send + 'static,
+{
+    type Response = A::Response;
+    type Error = A::Error;
+    type Future = BoxFuture<'static, Result<A::Response, A::Error>>;
+
+    // Readiness is checked on the clone that takes the request (`oneshot`),
+    // since which service that is depends on the request.
+    fn poll_ready(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
+        if (self.exempt)(req.method(), req.uri().path()) {
+            Box::pin(self.plain.clone().oneshot(req))
+        } else {
+            Box::pin(self.limited.clone().oneshot(req))
+        }
+    }
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+    use axum::{body::Body, routing::get, Router};
+    use std::net::Ipv4Addr;
+    use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
+
+    #[test]
+    fn only_hls_media_gets_are_exempt() {
+        let get = Method::GET;
+        for path in [
+            "/api/v3/live/3/hls/live.m3u8",
+            "/api/v3/live/3/hls/master.m3u8",
+            "/api/v3/live/3/hls/init.mp4",
+            "/api/v3/live/12/hls/segment_42.m4s",
+            "/zm-api/api/v3/live/3/hls/live.m3u8",
+        ] {
+            assert!(is_live_media_fetch(&get, path), "{path}");
+        }
+        for (method, path) in [
+            (Method::POST, "/api/v3/live/3/hls/link"),
+            (Method::GET, "/api/v3/live/3/hls/link"),
+            (Method::POST, "/api/v3/live/3/start"),
+            (Method::GET, "/api/v3/live/sessions"),
+            (Method::GET, "/api/v3/live/x/hls/live.m3u8"),
+            (Method::GET, "/api/v3/events"),
+            (Method::DELETE, "/api/v3/live/3/hls/live.m3u8"),
+        ] {
+            assert!(!is_live_media_fetch(&method, path), "{method} {path}");
+        }
+    }
+
+    async fn status(app: &Router, path: &str) -> (u16, Option<String>) {
+        let mut req = Request::builder().uri(path).body(Body::empty()).unwrap();
+        req.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 9)),
+            40000,
+        )));
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let retry = resp
+            .headers()
+            .get("retry-after")
+            .map(|v| v.to_str().unwrap().to_string());
+        (resp.status().as_u16(), retry)
+    }
+
+    #[tokio::test]
+    async fn hls_fetches_skip_the_limiter_and_429s_say_when_to_retry() {
+        let conf = GovernorConfigBuilder::default()
+            .per_second(1)
+            .burst_size(1)
+            .key_extractor(IpKeyExtractor::new(false, &[]))
+            .finish()
+            .unwrap();
+        let limiter = ExemptLayer::new(
+            GovernorLayer::new(conf).error_handler(too_many_requests),
+            is_live_media_fetch,
+        );
+        let app = Router::new()
+            .route("/api/v3/events", get(|| async { "ok" }))
+            .route("/api/v3/live/{id}/hls/{file}", get(|| async { "seg" }))
+            .layer(limiter);
+
+        assert_eq!(status(&app, "/api/v3/events").await.0, 200);
+        let (code, retry) = status(&app, "/api/v3/events").await;
+        assert_eq!(code, 429);
+        let retry: u64 = retry.expect("retry-after").parse().unwrap();
+        assert!(retry >= 1, "retry-after {retry}");
+
+        for n in 0..20 {
+            let path = format!("/api/v3/live/3/hls/seg_{n}.m4s");
+            assert_eq!(status(&app, &path).await.0, 200, "{path}");
+        }
     }
 }
 
