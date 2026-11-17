@@ -1305,13 +1305,16 @@ pub struct AlarmControlRequest {
     #[serde(default)]
     pub score: Option<u32>,
 
-    /// Short cause string (max 31 chars). Only used when action is "on". Default: "API"
-    #[garde(length(max = 31))]
+    /// Short cause. Only used when action is "on". Default: "API".
+    /// Filtered as API v2 does, then cut to 31 bytes; up to 1024 bytes
+    /// may be sent.
+    #[garde(length(max = 1024))]
     #[serde(default)]
     pub cause: Option<String>,
 
-    /// Description text (max 255 chars). Only used when action is "on".
-    #[garde(length(max = 255))]
+    /// Description text. Only used when action is "on". Filtered as the
+    /// cause is, then cut to 255 bytes; up to 4096 bytes may be sent.
+    #[garde(length(max = 4096))]
     #[serde(default)]
     pub text: Option<String>,
 }
@@ -1582,5 +1585,31 @@ impl MonitorListParams {
             page: self.page,
             page_size: self.page_size,
         }
+    }
+}
+
+#[cfg(test)]
+mod alarm_request_tests {
+    use super::AlarmControlRequest;
+    use garde::Validate;
+
+    fn on(cause: &str, text: &str) -> AlarmControlRequest {
+        AlarmControlRequest {
+            action: "on".to_string(),
+            score: None,
+            cause: Some(cause.to_string()),
+            text: Some(text.to_string()),
+        }
+    }
+
+    #[test]
+    fn cause_and_text_longer_than_the_shm_fields_are_accepted_and_cut_later() {
+        assert!(on(&"a".repeat(40), &"b".repeat(300)).validate().is_ok());
+    }
+
+    #[test]
+    fn oversized_cause_or_text_is_still_refused() {
+        assert!(on(&"a".repeat(1025), "x").validate().is_err());
+        assert!(on("x", &"b".repeat(4097)).validate().is_err());
     }
 }
