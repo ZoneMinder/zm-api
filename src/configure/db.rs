@@ -18,7 +18,7 @@ use super::zmconf::ZmConfig;
 ///
 /// When using placeholder values in TOML (like "username", "password"),
 /// the actual values will be loaded from ZoneMinder's zm.conf if available.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct DatabaseConfig {
     #[serde(default = "default_username")]
     pub username: String,
@@ -55,6 +55,28 @@ pub struct DatabaseConfig {
     /// only for local debugging.
     #[serde(default = "default_sqlx_logging")]
     pub sqlx_logging: bool,
+}
+
+// Manual Debug: the config is `{:?}`-printable all the way up from
+// `AppConfig`, and the password must not come out with it.
+impl std::fmt::Debug for DatabaseConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DatabaseConfig")
+            .field("username", &self.username)
+            .field("password", &"[REDACTED]")
+            .field("port", &self.port)
+            .field("host", &self.host)
+            .field("socket", &self.socket)
+            .field("max_connections", &self.max_connections)
+            .field("min_connections", &self.min_connections)
+            .field("connect_timeout_secs", &self.connect_timeout_secs)
+            .field("acquire_timeout_secs", &self.acquire_timeout_secs)
+            .field("idle_timeout_secs", &self.idle_timeout_secs)
+            .field("max_lifetime_secs", &self.max_lifetime_secs)
+            .field("database_name", &self.database_name)
+            .field("sqlx_logging", &self.sqlx_logging)
+            .finish()
+    }
 }
 
 fn default_username() -> String {
@@ -307,6 +329,11 @@ mod tests {
             config.get_url(),
             "mysql://testuser:testpass@dbhost:3307/testdb?timezone=SYSTEM"
         );
+
+        // Printing the config, as a log line or a panic would, hides it.
+        let printed = format!("{config:?}");
+        assert!(!printed.contains("testpass"), "{printed}");
+        assert!(printed.contains("testuser"));
     }
 
     #[test]

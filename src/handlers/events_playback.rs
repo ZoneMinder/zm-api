@@ -478,10 +478,19 @@ async fn event_vod_assets(
     let video_path = get_event_video_path(state, id, scope).await?;
     let info = crate::streaming::probe::probe_event_media(id, video_path.clone())
         .await
-        .map_err(AppError::InternalServerError)?;
+        .map_err(|e| unreadable_recording(id, &e))?;
     crate::streaming::hls::vod::get_or_build(id, video_path, info)
         .await
-        .map_err(AppError::InternalServerError)
+        .map_err(|e| unreadable_recording(id, &e))
+}
+
+/// The error for a recording that couldn't be read. `detail` names the file
+/// with its full path on the server, which shows the storage layout to
+/// anyone who may view events. It goes to the log; the client is told only
+/// which event.
+fn unreadable_recording(event_id: u64, detail: &str) -> AppError {
+    tracing::warn!("event {event_id}: {detail}");
+    AppError::InternalServerError(format!("event {event_id}'s recording could not be read"))
 }
 
 /// Get the fMP4 initialization segment for an event's HLS-VOD stream.
@@ -745,7 +754,7 @@ pub async fn get_event_info(
 
     let info = crate::streaming::probe::probe_event_media(path.id, video_path)
         .await
-        .map_err(AppError::InternalServerError)?;
+        .map_err(|e| unreadable_recording(path.id, &e))?;
 
     let playable_direct = info.playable_direct();
     Ok(Json(EventVideoInfo {
@@ -932,6 +941,19 @@ mod tests {
     // ------------------------------------------------------------------
     // parse_range_header
     // ------------------------------------------------------------------
+
+    #[test]
+    fn an_unreadable_recording_does_not_name_its_path() {
+        let detail =
+            "open \"/var/cache/zoneminder/events/3/2026-11-15/41/41-video.mp4\": Invalid data";
+        let (_, body) = unreadable_recording(41, detail).response();
+        assert!(
+            !body.error_message.contains("/var/cache"),
+            "{}",
+            body.error_message
+        );
+        assert!(body.error_message.contains("41"));
+    }
 
     #[test]
     fn parse_range_header_normal_closed_range() {

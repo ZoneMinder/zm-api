@@ -11,6 +11,12 @@ use axum::{
 use garde::Validate;
 use serde::Deserialize;
 
+/// Whether the caller may edit storage, and so already knows its secrets.
+fn may_edit(claims: &crate::util::claim::UserClaims) -> bool {
+    use crate::util::authz::{Feature, Level};
+    claims.perms.level(Feature::System) >= Level::Edit
+}
+
 /// List storage definitions used by ZoneMinder for event/video storage.
 ///
 /// - Requires a valid JWT.
@@ -27,9 +33,17 @@ use serde::Deserialize;
 )]
 pub async fn list_storage(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<crate::util::claim::UserClaims>,
     Query(params): Query<PaginationParams>,
 ) -> AppResult<Json<PaginatedStorageResponse>> {
-    let result = crate::service::storage::list_paginated(&state, &params).await?;
+    let mut result = crate::service::storage::list_paginated(&state, &params).await?;
+    if !may_edit(&claims) {
+        result.items = result
+            .items
+            .into_iter()
+            .map(StorageResponse::without_secrets)
+            .collect();
+    }
     Ok(Json(PaginatedStorageResponse::from(result)))
 }
 
@@ -47,9 +61,14 @@ pub async fn list_storage(
 pub async fn get_storage(
     Path(id): Path<u16>,
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<crate::util::claim::UserClaims>,
 ) -> AppResult<Json<StorageResponse>> {
     let item = crate::service::storage::get_by_id(&state, id).await?;
-    Ok(Json(item))
+    Ok(Json(if may_edit(&claims) {
+        item
+    } else {
+        item.without_secrets()
+    }))
 }
 
 /// Create a new storage entry.

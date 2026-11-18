@@ -133,13 +133,25 @@ impl Default for WebRtcConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(default)]
 pub struct TurnConfig {
     pub enabled: bool,
     pub server: String,
     pub username: String,
     pub password: String,
+}
+
+// Manual Debug: the TURN password must not come out with the config.
+impl std::fmt::Debug for TurnConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TurnConfig")
+            .field("enabled", &self.enabled)
+            .field("server", &self.server)
+            .field("username", &self.username)
+            .field("password", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl Default for TurnConfig {
@@ -241,6 +253,15 @@ impl Default for RtspConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_turn_password_is_not_printed_with_the_config() {
+        let turn = TurnConfig {
+            password: "hunter2".to_string(),
+            ..TurnConfig::default()
+        };
+        assert!(!format!("{turn:?}").contains("hunter2"));
+    }
 
     #[test]
     fn test_streaming_config_default() {

@@ -44,14 +44,16 @@ fn tokens(resp: TokenResponse) -> Tokens {
 pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
-) -> AppResult<Json<TokenResponse>> {
-    info!("Login attempt for user: {}.", req.username);
+) -> AppResult<Tokens> {
+    // Validate before logging: the name is the client's text until then, and
+    // a newline in it would forge log lines.
     req.validate()?;
+    info!("Login attempt for user: {}.", req.username);
     let username = req.username.clone();
     match service::auth::login(&state, req).await {
         Ok(resp) => {
             info!("Successfully logged in user: {username}.");
-            Ok(Json(resp))
+            Ok(tokens(resp))
         }
         Err(e) => {
             warn!("Unsuccessfully login user error: {e:?}.");
