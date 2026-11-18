@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use async_zip::tokio::write::ZipFileWriter;
-use async_zip::{Compression, ZipDateTime, ZipEntryBuilder};
+use async_zip::{Compression, ZipDateTime, ZipDateTimeBuilder, ZipEntryBuilder};
 use futures::io::AsyncWriteExt;
 use tokio::io::{AsyncWrite, DuplexStream};
 use tokio_util::compat::TokioAsyncReadCompatExt;
@@ -101,7 +101,7 @@ async fn write_zip<W: AsyncWrite + Unpin>(
     out: W,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut zip = ZipFileWriter::with_tokio(out);
-    let now = ZipDateTime::from_chrono(&chrono::Utc::now());
+    let now = zip_time(jiff::Timestamp::now());
     for ex in exports {
         let folder = ex.event.id.to_string();
         if parts.contains(&ExportPart::Details) {
@@ -154,8 +154,9 @@ async fn write_zip<W: AsyncWrite + Unpin>(
             let modified = tokio::fs::metadata(&path)
                 .await?
                 .modified()
-                .map(chrono::DateTime::<chrono::Utc>::from)
-                .map(|t| ZipDateTime::from_chrono(&t))
+                .ok()
+                .and_then(|t| jiff::Timestamp::try_from(t).ok())
+                .map(zip_time)
                 .unwrap_or(now);
             let entry =
                 ZipEntryBuilder::new(format!("{folder}/{name}").into(), Compression::Stored)
@@ -171,9 +172,38 @@ async fn write_zip<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
+/// An instant as a ZIP entry date: its UTC wall-clock, to the 2 s the format keeps.
+fn zip_time(t: jiff::Timestamp) -> ZipDateTime {
+    let utc = crate::util::time::utc_civil(t);
+    ZipDateTimeBuilder::new()
+        .year(i32::from(utc.year()))
+        .month(utc.month() as u32)
+        .day(utc.day() as u32)
+        .hour(utc.hour() as u32)
+        .minute(utc.minute() as u32)
+        .second(utc.second() as u32)
+        .build()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_zip_date_carries_the_utc_wall_clock() {
+        let z = zip_time("2026-10-23T21:30:14Z".parse().unwrap());
+        assert_eq!(
+            (
+                z.year(),
+                z.month(),
+                z.day(),
+                z.hour(),
+                z.minute(),
+                z.second()
+            ),
+            (2026, 10, 23, 21, 30, 14)
+        );
+    }
 
     #[test]
     fn files_are_sorted_into_parts_by_extension() {

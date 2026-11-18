@@ -3,7 +3,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use chrono::{NaiveDateTime, Utc};
+use crate::util::time;
+use jiff::civil::DateTime as Civil;
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder};
 
 use crate::dto::response::event_audit::{EventAuditResponse, MonitorEventAudit};
@@ -48,9 +49,9 @@ struct Acc {
     count: u64,
     first_id: u64,
     last_id: u64,
-    first_start: Option<NaiveDateTime>,
-    last_end: Option<NaiveDateTime>,
-    prev_end: Option<NaiveDateTime>,
+    first_start: Option<Civil>,
+    last_end: Option<Civil>,
+    prev_end: Option<Civil>,
     min_gap: Option<i64>,
     max_gap: Option<i64>,
     missing: Vec<u64>,
@@ -58,13 +59,13 @@ struct Acc {
 }
 
 impl Acc {
-    fn push(&mut self, id: u64, start: Option<NaiveDateTime>, end: Option<NaiveDateTime>) {
+    fn push(&mut self, id: u64, start: Option<Civil>, end: Option<Civil>) {
         if self.count == 0 {
             self.first_id = id;
             self.first_start = start;
         }
         if let (Some(prev), Some(start)) = (self.prev_end, start) {
-            let gap = (start - prev).num_seconds();
+            let gap = start.duration_since(prev).as_secs();
             self.min_gap = Some(self.min_gap.map_or(gap, |g| g.min(gap)));
             self.max_gap = Some(self.max_gap.map_or(gap, |g| g.max(gap)));
         }
@@ -76,14 +77,16 @@ impl Acc {
 }
 
 /// A local-time column value, as UTC, the way every event response reports it.
-fn rfc3339(t: NaiveDateTime) -> String {
-    crate::util::naive_local_to_utc(t).to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+fn rfc3339(t: Civil) -> String {
+    crate::util::naive_local_to_utc(t)
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
 }
 
 pub async fn event_audit(
     state: &AppState,
-    start: NaiveDateTime,
-    end: NaiveDateTime,
+    start: Civil,
+    end: Civil,
     monitor_id: Option<u32>,
     scope: &MonitorScope,
 ) -> AppResult<EventAuditResponse> {
@@ -92,8 +95,8 @@ pub async fn event_audit(
     }
     // Events overlapping the window, as legacy selects them.
     let mut query = events::Entity::find()
-        .filter(events::Column::EndDateTime.gt(start))
-        .filter(events::Column::StartDateTime.lt(end));
+        .filter(events::Column::EndDateTime.gt(time::db_datetime(start)))
+        .filter(events::Column::StartDateTime.lt(time::db_datetime(end)));
     match monitor_id {
         Some(id) if scope.allows(id, Level::View) => {
             query = query.filter(events::Column::MonitorId.eq(id));
@@ -121,7 +124,11 @@ pub async fn event_audit(
     let mut by_monitor: BTreeMap<u32, Acc> = BTreeMap::new();
     for e in &rows {
         let acc = by_monitor.entry(e.monitor_id).or_default();
-        acc.push(e.id, e.start_date_time, e.end_date_time);
+        acc.push(
+            e.id,
+            e.start_date_time.map(time::civil),
+            e.end_date_time.map(time::civil),
+        );
 
         let root = match roots.get(&e.storage_id) {
             Some(root) => root.clone(),
@@ -173,12 +180,12 @@ pub async fn event_audit(
 }
 
 /// The default window, as legacy's: the hour ending an hour ago.
-pub fn default_window() -> (NaiveDateTime, NaiveDateTime) {
+pub fn default_window() -> (Civil, Civil) {
     // In the server-local time the event columns hold (#173).
-    let now = crate::util::utc_to_naive_local(Utc::now());
+    let now = time::local_now();
     (
-        now - chrono::Duration::hours(2),
-        now - chrono::Duration::hours(1),
+        now.saturating_sub(jiff::SignedDuration::from_hours(2)),
+        now.saturating_sub(jiff::SignedDuration::from_hours(1)),
     )
 }
 
@@ -186,8 +193,8 @@ pub fn default_window() -> (NaiveDateTime, NaiveDateTime) {
 mod tests {
     use super::*;
 
-    fn t(s: &str) -> Option<NaiveDateTime> {
-        Some(NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").unwrap())
+    fn t(s: &str) -> Option<Civil> {
+        Some(Civil::strptime("%Y-%m-%d %H:%M:%S", s).unwrap())
     }
 
     #[test]

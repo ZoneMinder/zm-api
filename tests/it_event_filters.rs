@@ -18,7 +18,7 @@ async fn insert_event(db: &DatabaseConnection, monitor_id: u32, name: &str, caus
         state_id: Set(1),
         name: Set(unique_name(name)),
         cause: Set(Some(cause.to_string())),
-        start_date_time: Set(Some(chrono::Utc::now().naive_utc())),
+        start_date_time: Set(Some(zm_api::util::time::db_utc_now())),
         ..Default::default()
     }
     .insert(db)

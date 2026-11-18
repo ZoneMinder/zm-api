@@ -126,7 +126,7 @@ impl From<EventModel> for EventResponse {
     fn from(model: EventModel) -> Self {
         // ZoneMinder stores DATETIME in server-local time; convert to true UTC
         // (GH #16).
-        let to_utc = crate::util::naive_local_to_utc;
+        let to_utc = crate::util::datetime_to_utc;
 
         Self {
             id: model.id,

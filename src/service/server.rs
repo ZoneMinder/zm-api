@@ -19,9 +19,9 @@ pub async fn get_locale(state: &AppState) -> AppResult<LocaleResponse> {
     let timezone = zm_tz.or_else(|| iana_time_zone::get_timezone().ok());
 
     // Current offset of the process's local zone.
-    let now = chrono::Local::now();
-    let utc_offset_seconds = now.offset().local_minus_utc();
-    let utc_offset = now.format("%:z").to_string();
+    let now = jiff::Zoned::now();
+    let utc_offset_seconds = now.offset().seconds();
+    let utc_offset = now.strftime("%:z").to_string();
 
     Ok(LocaleResponse {
         timezone,

@@ -64,7 +64,7 @@ pub struct EventInfo {
 
 impl From<&events::Model> for EventInfo {
     fn from(m: &events::Model) -> Self {
-        use crate::util::naive_local_to_utc as utc;
+        use crate::util::datetime_to_utc as utc;
         Self {
             event_id: m.id,
             monitor_id: m.monitor_id,
@@ -500,10 +500,7 @@ mod tests {
 
     fn event(id: u64, monitor_id: u32, ended: bool, notes: Option<&str>) -> events::Model {
         use crate::entity::sea_orm_active_enums::{Orientation, Scheme};
-        let t = chrono::NaiveDate::from_ymd_opt(2026, 10, 24)
-            .unwrap()
-            .and_hms_opt(10, 0, 0)
-            .unwrap();
+        let t = crate::util::time::db_datetime("2026-10-24T10:00:00".parse().unwrap());
         events::Model {
             id,
             monitor_id,

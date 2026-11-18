@@ -325,7 +325,8 @@ pub struct WebRtcSessionStats {
     pub state: WebRtcSessionState,
     pub packets_sent: u64,
     pub bytes_sent: u64,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(serialize_with = "crate::util::time::serialize_rfc3339_z")]
+    pub created_at: jiff::Timestamp,
 }
 
 /// One outgoing media track and what `write_sample` needs to address it.
@@ -484,7 +485,7 @@ pub struct WebRtcLiveSession {
     /// Audio track — present when the monitor delivers audio the session
     /// can carry (G.711 pass-through or transcoded Opus)
     pub audio_track: Option<SendTrack>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
     packets_sent: AtomicU64,
     bytes_sent: AtomicU64,
     /// Candidates the viewer has sent so far.
@@ -1081,7 +1082,7 @@ impl WebRtcLiveManager {
             peer_connection,
             video_track,
             audio_track,
-            created_at: chrono::Utc::now(),
+            created_at: jiff::Timestamp::now(),
             packets_sent: AtomicU64::new(0),
             bytes_sent: AtomicU64::new(0),
             remote_candidates: AtomicU64::new(0),

@@ -1,5 +1,6 @@
 //! DB query layer for the zm-api-owned `event_synopsis` table.
 
+use crate::util::time::db_datetime;
 use sea_orm::*;
 
 use crate::entity::event_synopsis;
@@ -71,14 +72,14 @@ pub async fn update_status(
 pub async fn find_by_monitor_created_between(
     db: &DatabaseConnection,
     monitor_id: u32,
-    from: chrono::NaiveDateTime,
-    to: chrono::NaiveDateTime,
+    from: jiff::civil::DateTime,
+    to: jiff::civil::DateTime,
     limit: u64,
 ) -> Result<Vec<event_synopsis::Model>, DbErr> {
     EventSynopsis::find()
         .filter(event_synopsis::Column::MonitorId.eq(monitor_id))
-        .filter(event_synopsis::Column::CreatedAt.gte(from))
-        .filter(event_synopsis::Column::CreatedAt.lte(to))
+        .filter(event_synopsis::Column::CreatedAt.gte(db_datetime(from)))
+        .filter(event_synopsis::Column::CreatedAt.lte(db_datetime(to)))
         .order_by_desc(event_synopsis::Column::CreatedAt)
         .limit(limit)
         .all(db)
@@ -90,13 +91,13 @@ pub async fn find_by_monitor_created_between(
 pub async fn count_by_monitor_created_between(
     db: &DatabaseConnection,
     monitor_id: u32,
-    from: chrono::NaiveDateTime,
-    to: chrono::NaiveDateTime,
+    from: jiff::civil::DateTime,
+    to: jiff::civil::DateTime,
 ) -> Result<u64, DbErr> {
     EventSynopsis::find()
         .filter(event_synopsis::Column::MonitorId.eq(monitor_id))
-        .filter(event_synopsis::Column::CreatedAt.gte(from))
-        .filter(event_synopsis::Column::CreatedAt.lte(to))
+        .filter(event_synopsis::Column::CreatedAt.gte(db_datetime(from)))
+        .filter(event_synopsis::Column::CreatedAt.lte(db_datetime(to)))
         .count(db)
         .await
 }
@@ -104,11 +105,11 @@ pub async fn count_by_monitor_created_between(
 /// All rows whose `expires_at` is in the past relative to `now` (retention job).
 pub async fn find_expired(
     db: &DatabaseConnection,
-    now: chrono::NaiveDateTime,
+    now: jiff::civil::DateTime,
 ) -> Result<Vec<event_synopsis::Model>, DbErr> {
     EventSynopsis::find()
         .filter(event_synopsis::Column::ExpiresAt.is_not_null())
-        .filter(event_synopsis::Column::ExpiresAt.lt(now))
+        .filter(event_synopsis::Column::ExpiresAt.lt(db_datetime(now)))
         .all(db)
         .await
 }

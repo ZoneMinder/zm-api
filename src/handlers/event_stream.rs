@@ -139,7 +139,7 @@ pub async fn stream_events(
 
     let mut sub = Subscriber {
         expires: tokio::time::Instant::now()
-            + Duration::from_secs((claims.exp - chrono::Utc::now().timestamp()).max(0) as u64),
+            + Duration::from_secs((claims.exp - crate::util::time::unix_now()).max(0) as u64),
         state: state.clone(),
         claims,
         scope,

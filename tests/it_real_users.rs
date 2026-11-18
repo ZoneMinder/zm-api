@@ -65,7 +65,7 @@ async fn site(app: &TestApp) -> Site {
             capture_fps: Set(Decimal::new(1000, 2)),
             analysis_fps: Set(Decimal::new(1000, 2)),
             capture_bandwidth: Set(0),
-            updated_on: Set(zm_api::util::utc_to_timestamp(chrono::Utc::now())),
+            updated_on: Set(zm_api::util::utc_to_timestamp(jiff::Timestamp::now())),
         }
         .insert(&app.db)
         .await

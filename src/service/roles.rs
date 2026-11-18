@@ -143,7 +143,7 @@ async fn revoke_tokens(state: &AppState, user_ids: &[u32]) -> AppResult<()> {
         return Ok(());
     }
     // now+1, as logout does: it covers tokens minted in the current second.
-    let floor = chrono::Utc::now().timestamp() + 1;
+    let floor = crate::util::time::unix_now() + 1;
     // In memory first, so the tokens are dead even if the write below fails.
     for uid in user_ids {
         state.revocations.revoke(*uid, floor);
@@ -227,7 +227,7 @@ mod tests {
             .append_exec_results(vec![done()])
             .into_connection();
         let state = AppState::for_test_with_db(db);
-        let issued = chrono::Utc::now().timestamp();
+        let issued = crate::util::time::unix_now();
 
         update(
             &state,
@@ -272,7 +272,7 @@ mod tests {
 
         assert!(!state
             .revocations
-            .is_revoked(5, chrono::Utc::now().timestamp()));
+            .is_revoked(5, crate::util::time::unix_now()));
     }
 
     #[tokio::test]
@@ -282,7 +282,7 @@ mod tests {
             .append_exec_results(vec![done(), done()])
             .into_connection();
         let state = AppState::for_test_with_db(db);
-        let issued = chrono::Utc::now().timestamp();
+        let issued = crate::util::time::unix_now();
 
         delete(&state, 7).await.unwrap();
 

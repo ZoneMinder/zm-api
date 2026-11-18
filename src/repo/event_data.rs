@@ -4,7 +4,7 @@ use crate::entity::event_data::{
     ActiveModel, Column, Entity as EventData, Model as EventDataModel,
 };
 use crate::error::{AppError, AppResult};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use sea_orm::*;
 
 pub async fn find_all(
@@ -59,8 +59,8 @@ pub async fn create(
         .timestamp
         .as_ref()
         .map(|s| {
-            DateTime::parse_from_rfc3339(s)
-                .map(|dt| crate::util::utc_to_timestamp(dt.with_timezone(&Utc)))
+            s.parse::<Timestamp>()
+                .map(crate::util::utc_to_timestamp)
                 .map_err(|e| AppError::BadRequestError(format!("Invalid timestamp format: {}", e)))
         })
         .transpose()?;

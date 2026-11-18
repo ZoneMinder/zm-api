@@ -332,7 +332,7 @@ async fn create_event_db_now(
         monitor_id: Set(monitor_id),
         state_id: Set(1),
         name: Set(name),
-        start_date_time: Set(Some(chrono::Utc::now().naive_utc())),
+        start_date_time: Set(Some(zm_api::util::time::db_utc_now())),
         ..Default::default()
     };
     model.insert(db).await

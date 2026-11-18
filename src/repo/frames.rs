@@ -2,7 +2,7 @@ use crate::dto::request::frames::{CreateFrameRequest, UpdateFrameRequest};
 use crate::dto::PaginationParams;
 use crate::entity::frames::{ActiveModel, Column, Entity as FrameEntity, Model as FrameModel};
 use crate::error::AppResult;
-use chrono::DateTime;
+use jiff::Timestamp;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
     QueryOrder, Set,
@@ -102,15 +102,15 @@ pub async fn find_at_or_before(
 /// Create a new frame
 pub async fn create(db: &DatabaseConnection, req: &CreateFrameRequest) -> AppResult<FrameModel> {
     // Parse timestamp
-    let time_stamp = DateTime::parse_from_rfc3339(&req.time_stamp)
-        .map_err(|e| crate::error::AppError::BadRequestError(format!("Invalid timestamp: {}", e)))?
-        .naive_utc();
+    let time_stamp = req.time_stamp.parse::<Timestamp>().map_err(|e| {
+        crate::error::AppError::BadRequestError(format!("Invalid timestamp: {}", e))
+    })?;
 
     let frame = ActiveModel {
         event_id: Set(req.event_id),
         frame_id: Set(req.frame_id),
         r#type: Set(req.r#type.clone()),
-        time_stamp: Set(crate::util::utc_to_timestamp(time_stamp.and_utc())),
+        time_stamp: Set(crate::util::utc_to_timestamp(time_stamp)),
         delta: Set(req.delta),
         score: Set(req.score),
         ..Default::default()

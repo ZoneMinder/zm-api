@@ -98,7 +98,7 @@ impl Backend for Fake {
         match (token, monitor_id) {
             ("good", 1) if self.valid.load(Ordering::SeqCst) => Ok(Grant {
                 uid: 7,
-                exp: chrono::Utc::now().timestamp() + 3600,
+                exp: crate::util::time::unix_now() + 3600,
             }),
             ("good", 1) => Err(401),
             ("good", _) => Err(404),

@@ -30,7 +30,7 @@ async fn zmdc_status(state: &AppState) -> AppResult<Vec<crate::daemon::ipc::Proc
         })?;
     Ok(crate::daemon::zmdc_client::parse_status(
         &reply,
-        chrono::Local::now().naive_local(),
+        crate::util::time::local_now(),
     ))
 }
 

@@ -166,7 +166,7 @@ impl TelemetryService {
         }
         let interval = self.effective_interval().await;
         let last = self.last_upload().await.unwrap_or(0);
-        let now = chrono::Utc::now().timestamp();
+        let now = crate::util::time::unix_now();
 
         // `>=` rather than `>`: with a timer that fires exactly on the
         // interval, strict greater-than skips almost every send.
@@ -260,7 +260,7 @@ impl TelemetryService {
             country: UNKNOWN.to_string(),
             latitude: UNKNOWN.to_string(),
             longitude: UNKNOWN.to_string(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: crate::util::time::rfc3339_offset(jiff::Timestamp::now()),
             monitor_count,
             event_count,
             architecture: std::env::consts::ARCH.to_string(),

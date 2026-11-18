@@ -147,7 +147,7 @@ struct EventLocation {
     id: u64,
     monitor_id: u32,
     scheme: String,
-    start_date_time: Option<chrono::NaiveDateTime>,
+    start_date_time: Option<sea_orm::prelude::DateTime>,
 }
 
 impl AuditService {
@@ -468,7 +468,7 @@ impl AuditService {
         storages: &[crate::entity::storage::Model],
     ) -> u64 {
         let fs = &self.config.filesystem;
-        let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S").to_string();
+        let stamp = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%S").to_string();
         let cap = self.config.max_deletes_per_pass;
         let mut moved = 0u64;
 
@@ -555,7 +555,7 @@ impl AuditService {
         if self.config.dry_run || fs.quarantine_retention_days == 0 {
             return;
         }
-        let now = chrono::Utc::now().naive_utc();
+        let now = crate::util::time::utc_now();
         for st in storages {
             let qroot = std::path::PathBuf::from(&st.path).join(&fs.quarantine_dir);
             for batch in

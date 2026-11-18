@@ -11,7 +11,6 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use chrono::{Datelike, Timelike};
 use tracing::{debug, info, warn};
 
 use crate::entity::events::Model as EventModel;
@@ -111,9 +110,10 @@ pub(crate) fn build_event_directory_path(
     storage_path: &str,
     monitor_id: u32,
     event_id: u64,
-    start_time: Option<chrono::NaiveDateTime>,
+    start_time: Option<sea_orm::prelude::DateTime>,
     scheme: &Scheme,
 ) -> PathBuf {
+    let start_time = start_time.map(crate::util::time::civil);
     let base = PathBuf::from(storage_path).join(monitor_id.to_string());
 
     match scheme {
@@ -287,11 +287,12 @@ pub(crate) async fn remove_event_dir(storage_path: &str, event: &EventModel) -> 
 mod tests {
     use super::*;
 
-    fn sample_dt() -> chrono::NaiveDateTime {
-        chrono::NaiveDate::from_ymd_opt(2024, 3, 9)
-            .unwrap()
-            .and_hms_opt(14, 5, 6)
-            .unwrap()
+    fn column(s: &str) -> sea_orm::prelude::DateTime {
+        crate::util::time::db_datetime(s.parse().unwrap())
+    }
+
+    fn sample_dt() -> sea_orm::prelude::DateTime {
+        column("2024-03-09T14:05:06")
     }
 
     #[test]
@@ -315,10 +316,7 @@ mod tests {
     #[test]
     fn deep_zero_pads_and_wraps_year_to_two_digits() {
         // Year 2008 -> "08"; single-digit month/day/time zero-padded.
-        let dt = chrono::NaiveDate::from_ymd_opt(2008, 1, 2)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap();
+        let dt = column("2008-01-02T00:00:00");
         let p = build_event_directory_path("/srv", 1, 5, Some(dt), &Scheme::Deep);
         assert_eq!(p, PathBuf::from("/srv/1/08/01/02/00/00/00"));
     }
@@ -385,8 +383,7 @@ mod tests {
 
     fn deep_event(id: u64, monitor_id: u32, start: &str) -> EventModel {
         let mut e = mk_event(id, monitor_id, Some(1), Scheme::Deep);
-        e.start_date_time =
-            Some(chrono::NaiveDateTime::parse_from_str(start, "%Y-%m-%d %H:%M:%S").unwrap());
+        e.start_date_time = Some(column(start));
         e
     }
 

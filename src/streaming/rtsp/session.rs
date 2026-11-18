@@ -409,7 +409,7 @@ async fn stream<B: Backend>(
                 Err(broadcast::error::RecvError::Closed) => break,
             },
             _ = reauth.tick() => {
-                let expired = chrono::Utc::now().timestamp() >= exp;
+                let expired = crate::util::time::unix_now() >= exp;
                 if expired || backend.authorize(&token, monitor_id).await.is_err() {
                     info!("rtsp: monitor {monitor_id}: link no longer valid; closing");
                     break;

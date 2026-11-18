@@ -19,9 +19,10 @@ mod common;
 use std::sync::Arc;
 
 use axum::http::{Method, StatusCode};
-use chrono::{Duration, Utc};
+use jiff::SignedDuration;
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use tokio::sync::mpsc;
+use zm_api::util::time::{db_datetime, utc_now};
 
 use common::fixtures::{insert_monitor, unique_name, RowGuard};
 use common::harness::{superuser_token, TestApp};
@@ -120,7 +121,7 @@ async fn insert_synopsis_row(
         tube_count: Set(1),
         source_w: Set(32),
         source_h: Set(24),
-        created_at: Set(Utc::now().naive_utc()),
+        created_at: Set(db_datetime(utc_now())),
         expires_at: Set(None),
         ..Default::default()
     }
@@ -187,7 +188,7 @@ async fn synopsis_repo_round_trip() {
     assert_eq!(reloaded.rendered_path.as_deref(), Some("/tmp/out.mp4"));
 
     // not expired (expires_at is NULL), so find_expired in the far future is empty for it
-    let future = Utc::now().naive_utc() + Duration::days(3650);
+    let future = utc_now() + SignedDuration::from_hours(3650 * 24);
     let expired = repo::event_synopsis::find_expired(&db, future)
         .await
         .unwrap();
@@ -559,8 +560,8 @@ async fn overview_merges_events_in_window() {
         },
     );
 
-    let from = Utc::now().naive_utc() - Duration::hours(1);
-    let to = Utc::now().naive_utc() + Duration::hours(1);
+    let from = utc_now() - SignedDuration::from_hours(1);
+    let to = utc_now() + SignedDuration::from_hours(1);
     let jpeg = service
         .overview_still(monitor_id, from, to, vec![])
         .await
@@ -568,8 +569,8 @@ async fn overview_merges_events_in_window() {
     assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "overview is a JPEG");
 
     // A window with no synopses → NotFound.
-    let empty_from = Utc::now().naive_utc() + Duration::days(3650);
-    let empty_to = empty_from + Duration::hours(1);
+    let empty_from = utc_now() + SignedDuration::from_hours(3650 * 24);
+    let empty_to = empty_from + SignedDuration::from_hours(1);
     let err = service
         .overview_still(monitor_id, empty_from, empty_to, vec![])
         .await
@@ -600,7 +601,7 @@ async fn retention_removes_expired_rows_and_cached_mp4() {
     let mp4_path = cache_dir.join("event-990808.mp4");
     std::fs::write(&mp4_path, b"\x00\x00\x00\x18ftypmp42fake").expect("write fake mp4");
 
-    let now = Utc::now().naive_utc();
+    let now = utc_now();
     let row = event_synopsis::ActiveModel {
         event_id: Set(Some(990_808)),
         monitor_id: Set(monitor_id),
@@ -612,8 +613,8 @@ async fn retention_removes_expired_rows_and_cached_mp4() {
         tube_count: Set(1),
         source_w: Set(32),
         source_h: Set(24),
-        created_at: Set(now - Duration::days(8)),
-        expires_at: Set(Some(now - Duration::days(1))), // expired yesterday
+        created_at: Set(db_datetime(now - SignedDuration::from_hours(8 * 24))),
+        expires_at: Set(Some(db_datetime(now - SignedDuration::from_hours(24)))), // expired yesterday
         ..Default::default()
     }
     .insert(&fixture_db)

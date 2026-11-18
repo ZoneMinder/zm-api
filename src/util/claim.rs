@@ -9,7 +9,6 @@ use axum_extra::{
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::RequestPartsExt;
-use chrono::Utc;
 use dashmap::DashMap;
 use fake::Dummy;
 use jsonwebtoken::Header;
@@ -80,7 +79,7 @@ impl UserClaims {
         typ: TokenType,
     ) -> Self {
         Self::issued_at(
-            Utc::now().timestamp(),
+            crate::util::time::unix_now(),
             duration,
             username,
             user_id,

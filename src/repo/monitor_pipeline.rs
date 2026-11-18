@@ -23,8 +23,9 @@ pub async fn upsert(
     monitor_id: u32,
     graph_json: String,
     version: u32,
-    now: chrono::NaiveDateTime,
+    now: jiff::civil::DateTime,
 ) -> Result<monitor_pipeline::Model, DbErr> {
+    let now = crate::util::time::db_datetime(now);
     match MonitorPipeline::find_by_id(monitor_id).one(db).await? {
         Some(existing) => {
             let mut active: monitor_pipeline::ActiveModel = existing.into();

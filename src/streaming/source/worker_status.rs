@@ -88,7 +88,7 @@ pub struct StatusChange {
 }
 
 fn now_ms() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+    jiff::Timestamp::now().as_millisecond()
 }
 
 fn str_field(d: &Map<String, Value>, k: &str) -> Option<String> {

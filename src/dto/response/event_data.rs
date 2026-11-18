@@ -22,7 +22,7 @@ impl From<&EventDataModel> for EventDataResponse {
             frame_id: model.frame_id,
             timestamp: model
                 .timestamp
-                .map(|dt| crate::util::timestamp_to_utc(dt).to_rfc3339()),
+                .map(|dt| crate::util::time::rfc3339_offset(crate::util::timestamp_to_utc(dt))),
             data: model.data.clone(),
         }
     }

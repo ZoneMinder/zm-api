@@ -1,4 +1,4 @@
-use sea_orm::prelude::DateTimeUtc;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -15,7 +15,8 @@ pub struct EventTagResponse {
     #[schema(example = 1)]
     pub event_id: u64,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00Z")]
-    pub assigned_date: Option<DateTimeUtc>,
+    #[serde(serialize_with = "crate::util::time::serialize_option_rfc3339_z")]
+    pub assigned_date: Option<Timestamp>,
     #[schema(example = 1)]
     pub assigned_by: Option<u32>,
 }
@@ -88,7 +89,7 @@ impl From<&EventModel> for EventSummary {
     fn from(model: &EventModel) -> Self {
         // ZoneMinder stores DATETIME in server-local time; convert to true UTC
         // (GH #16).
-        let to_utc = crate::util::naive_local_to_utc;
+        let to_utc = crate::util::datetime_to_utc;
 
         Self {
             id: model.id,
@@ -109,7 +110,8 @@ pub struct TagDetailResponse {
     #[schema(example = "Important")]
     pub name: String,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00Z")]
-    pub create_date: Option<DateTimeUtc>,
+    #[serde(serialize_with = "crate::util::time::serialize_option_rfc3339_z")]
+    pub create_date: Option<Timestamp>,
     pub events: Vec<EventSummary>,
     #[schema(example = 100)]
     pub total_events: u64,

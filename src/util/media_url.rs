@@ -171,7 +171,7 @@ pub fn sign(resource: MediaResource, uid: u32, ttl: Duration) -> String {
     sign_until(
         resource,
         uid,
-        chrono::Utc::now().timestamp() + ttl.as_secs() as i64,
+        crate::util::time::unix_now() + ttl.as_secs() as i64,
     )
 }
 
@@ -182,7 +182,7 @@ pub fn sign_until(resource: MediaResource, uid: u32, exp: i64) -> String {
         &SignedGrant {
             resource,
             uid,
-            iat: chrono::Utc::now().timestamp(),
+            iat: crate::util::time::unix_now(),
             exp,
         },
     )
@@ -190,7 +190,7 @@ pub fn sign_until(resource: MediaResource, uid: u32, exp: i64) -> String {
 
 /// Verify a signed URL token against the current time.
 pub fn verify(token: &str) -> Result<SignedGrant, VerifyError> {
-    verify_with(&KEY, token, chrono::Utc::now().timestamp())
+    verify_with(&KEY, token, crate::util::time::unix_now())
 }
 
 #[cfg(test)]

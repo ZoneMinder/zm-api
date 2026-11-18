@@ -51,12 +51,12 @@ async fn recorded(label: &str) -> Option<Recorded> {
         width: Set(160),
         height: Set(120),
         default_video: Set(String::new()),
-        start_date_time: Set(Some(
-            chrono::Utc::now().naive_utc() - chrono::Duration::seconds(60),
-        )),
-        end_date_time: Set(Some(
-            chrono::Utc::now().naive_utc() - chrono::Duration::seconds(58),
-        )),
+        start_date_time: Set(Some(zm_api::util::time::db_datetime(
+            zm_api::util::time::utc_now() - jiff::SignedDuration::from_secs(60),
+        ))),
+        end_date_time: Set(Some(zm_api::util::time::db_datetime(
+            zm_api::util::time::utc_now() - jiff::SignedDuration::from_secs(58),
+        ))),
         ..Default::default()
     }
     .insert(&app.db)

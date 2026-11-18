@@ -7,6 +7,7 @@
 //! systemd's `StateDirectory=` creates). Which one is decided once, by a
 //! read-only look at `information_schema`.
 
+use crate::util::time;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -36,7 +37,7 @@ pub struct NewJob {
     pub monitor_id: u32,
     pub params: String,
     pub created_by: Option<u32>,
-    pub created_at: chrono::NaiveDateTime,
+    pub created_at: sea_orm::prelude::DateTime,
 }
 
 /// Which jobs a listing wants.
@@ -169,7 +170,7 @@ impl JobStore {
         &self,
         db: &DatabaseConnection,
         id: u32,
-        at: chrono::NaiveDateTime,
+        at: sea_orm::prelude::DateTime,
     ) -> AppResult<bool> {
         match self {
             JobStore::Table => Ok(media_jobs::Entity::update_many()
@@ -220,7 +221,7 @@ impl JobStore {
         &self,
         db: &DatabaseConnection,
         id: u32,
-        at: chrono::NaiveDateTime,
+        at: sea_orm::prelude::DateTime,
     ) -> AppResult<bool> {
         match self {
             JobStore::Table => Ok(media_jobs::Entity::update_many()
@@ -299,14 +300,14 @@ struct Stored {
     finished_at: Option<i64>,
 }
 
-fn to_ms(t: chrono::NaiveDateTime) -> i64 {
-    t.and_utc().timestamp_millis()
+/// The columns hold UTC digits. A stored job keeps them as epoch milliseconds.
+fn to_ms(t: sea_orm::prelude::DateTime) -> i64 {
+    time::utc_instant(t).as_millisecond()
 }
 
-fn from_ms(ms: i64) -> chrono::NaiveDateTime {
-    chrono::DateTime::from_timestamp_millis(ms)
-        .unwrap_or_default()
-        .naive_utc()
+fn from_ms(ms: i64) -> sea_orm::prelude::DateTime {
+    let t = jiff::Timestamp::from_millisecond(ms).unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+    time::db_datetime(time::utc_civil(t))
 }
 
 impl From<&Model> for Stored {

@@ -1,5 +1,5 @@
-use chrono::NaiveDateTime;
 use garde::Validate;
+use jiff::civil::DateTime as Civil;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -13,7 +13,8 @@ pub struct CreateSnapshotRequest {
     pub created_by: Option<i32>,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00")]
     #[garde(skip)]
-    pub created_on: Option<NaiveDateTime>,
+    #[serde(default, with = "crate::util::datetime_format::optional")]
+    pub created_on: Option<Civil>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema, Validate)]
@@ -26,5 +27,6 @@ pub struct UpdateSnapshotRequest {
     pub created_by: Option<i32>,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00")]
     #[garde(skip)]
-    pub created_on: Option<NaiveDateTime>,
+    #[serde(default, with = "crate::util::datetime_format::optional")]
+    pub created_on: Option<Civil>,
 }

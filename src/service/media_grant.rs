@@ -251,7 +251,7 @@ pub fn uri_signer(
     resource: MediaResource,
     ttl: Duration,
 ) -> Option<UriSigner> {
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::util::time::unix_now();
     let media_exp = |cred_exp: i64| (now + ttl.as_secs() as i64).min(cred_exp);
     if let Some(grant) = grant {
         return Some(UriSigner {

@@ -27,8 +27,8 @@ pub struct MediaJobResponse {
     pub finished_at: Option<DateTimeWrapper>,
 }
 
-fn utc(t: chrono::NaiveDateTime) -> DateTimeWrapper {
-    DateTimeWrapper(t.and_utc())
+fn utc(t: sea_orm::prelude::DateTime) -> DateTimeWrapper {
+    DateTimeWrapper(crate::util::time::utc_instant(t))
 }
 
 impl From<&Model> for MediaJobResponse {

@@ -123,7 +123,7 @@ async fn config_value(conn: &DatabaseConnection, name: &str) -> Result<Option<St
 /// Record `names` as applied in `seaql_migrations` without running them.
 pub async fn record_applied(conn: &DatabaseConnection, names: &[String]) -> Result<(), DbErr> {
     Migrator::install(conn).await?;
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::util::time::unix_now();
     for name in names {
         if migration_recorded(conn, name).await? {
             continue;

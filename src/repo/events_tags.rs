@@ -1,4 +1,4 @@
-use chrono::Utc;
+use jiff::Timestamp;
 use sea_orm::*;
 
 use crate::dto::request::events_tags::CreateEventTagRequest;
@@ -67,7 +67,7 @@ pub async fn create(
     let am = ActiveModel {
         tag_id: Set(req.tag_id),
         event_id: Set(req.event_id),
-        assigned_date: Set(Some(crate::util::utc_to_timestamp(Utc::now()))),
+        assigned_date: Set(Some(crate::util::utc_to_timestamp(Timestamp::now()))),
         assigned_by: Set(req.assigned_by),
     };
     Ok(am.insert(db).await?)

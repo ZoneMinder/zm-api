@@ -37,12 +37,13 @@ async fn insert_event(
     db: &DatabaseConnection,
     monitor_id: u32,
     storage_id: u16,
-    start: chrono::NaiveDateTime,
+    start: jiff::civil::DateTime,
     ended: bool,
     archived: u8,
     disk_space: u64,
     label: &str,
 ) -> u64 {
+    let start = zm_api::util::time::db_datetime(start);
     zm_api::entity::events::ActiveModel {
         monitor_id: Set(monitor_id),
         storage_id: Set(Some(storage_id)),
@@ -123,13 +124,13 @@ async fn reap_deletes_oldest_over_quota_and_protects_newest() {
     let _mg = RowGuard::monitor(monitor.id);
     let (storage, _sg) = dedicated_storage(&db, &tmp, "ReapStore").await;
 
-    let base = chrono::Utc::now().naive_utc();
+    let base = zm_api::util::time::utc_now();
     // Oldest -> newest; 100 MiB each; total 300 MiB.
     let e1 = insert_event(
         &db,
         monitor.id,
         storage.id,
-        base - chrono::Duration::hours(3),
+        base - jiff::SignedDuration::from_hours(3),
         true,
         0,
         100 * MIB,
@@ -140,7 +141,7 @@ async fn reap_deletes_oldest_over_quota_and_protects_newest() {
         &db,
         monitor.id,
         storage.id,
-        base - chrono::Duration::hours(2),
+        base - jiff::SignedDuration::from_hours(2),
         true,
         0,
         100 * MIB,
@@ -151,7 +152,7 @@ async fn reap_deletes_oldest_over_quota_and_protects_newest() {
         &db,
         monitor.id,
         storage.id,
-        base - chrono::Duration::hours(1),
+        base - jiff::SignedDuration::from_hours(1),
         true,
         0,
         100 * MIB,
@@ -202,13 +203,13 @@ async fn reap_never_touches_archived_or_in_progress_events() {
     // directory a real storage has.
     std::fs::create_dir_all(tmp.path().join(monitor.id.to_string())).unwrap();
 
-    let base = chrono::Utc::now().naive_utc();
+    let base = zm_api::util::time::utc_now();
     // Archived + in-progress are old and large but must be immune to the reaper.
     let archived = insert_event(
         &db,
         monitor.id,
         storage.id,
-        base - chrono::Duration::hours(5),
+        base - jiff::SignedDuration::from_hours(5),
         true,
         1,
         100 * MIB,
@@ -219,7 +220,7 @@ async fn reap_never_touches_archived_or_in_progress_events() {
         &db,
         monitor.id,
         storage.id,
-        base - chrono::Duration::hours(4),
+        base - jiff::SignedDuration::from_hours(4),
         false,
         0,
         100 * MIB,
@@ -231,7 +232,7 @@ async fn reap_never_touches_archived_or_in_progress_events() {
         &db,
         monitor.id,
         storage.id,
-        base - chrono::Duration::hours(3),
+        base - jiff::SignedDuration::from_hours(3),
         true,
         0,
         100 * MIB,
@@ -242,7 +243,7 @@ async fn reap_never_touches_archived_or_in_progress_events() {
         &db,
         monitor.id,
         storage.id,
-        base - chrono::Duration::hours(1),
+        base - jiff::SignedDuration::from_hours(1),
         true,
         0,
         100 * MIB,
@@ -294,12 +295,12 @@ async fn reap_dry_run_reports_but_deletes_nothing() {
     let _mg = RowGuard::monitor(monitor.id);
     let (storage, _sg) = dedicated_storage(&db, &tmp, "ReapDryStore").await;
 
-    let base = chrono::Utc::now().naive_utc();
+    let base = zm_api::util::time::utc_now();
     let e1 = insert_event(
         &db,
         monitor.id,
         storage.id,
-        base - chrono::Duration::hours(3),
+        base - jiff::SignedDuration::from_hours(3),
         true,
         0,
         100 * MIB,
@@ -310,7 +311,7 @@ async fn reap_dry_run_reports_but_deletes_nothing() {
         &db,
         monitor.id,
         storage.id,
-        base - chrono::Duration::hours(2),
+        base - jiff::SignedDuration::from_hours(2),
         true,
         0,
         100 * MIB,
@@ -321,7 +322,7 @@ async fn reap_dry_run_reports_but_deletes_nothing() {
         &db,
         monitor.id,
         storage.id,
-        base - chrono::Duration::hours(1),
+        base - jiff::SignedDuration::from_hours(1),
         true,
         0,
         100 * MIB,

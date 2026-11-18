@@ -2,6 +2,7 @@
 //! `NotificationsController` serves them: every user manages their own push
 //! tokens, and a System editor sees and manages everyone's.
 
+use crate::util::time::db_datetime;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, NotSet, QueryFilter, QueryOrder, Set};
 
 use crate::dto::request::notifications::{
@@ -11,7 +12,7 @@ use crate::dto::response::notifications::NotificationResponse;
 use crate::entity::notifications;
 use crate::error::{AppError, AppResult, Resource, ResourceType};
 use crate::server::state::AppState;
-use crate::util::utc_to_naive_local;
+use crate::util::utc_to_datetime;
 
 /// Who is asking: their id, and whether they are a System editor.
 #[derive(Debug, Clone, Copy)]
@@ -86,7 +87,7 @@ pub async fn upsert(
             true,
             notifications::ActiveModel {
                 id: NotSet,
-                created_on: Set(Some(chrono::Local::now().naive_local())),
+                created_on: Set(Some(db_datetime(crate::util::time::local_now()))),
                 token: Set(req.token.clone()),
                 interval: Set(0),
                 push_state: Set(PushState::Enabled.as_str().into()),
@@ -116,7 +117,7 @@ pub async fn upsert(
         am.badge_count = Set(v);
     }
     if let Some(v) = req.last_notified_at {
-        am.last_notified_at = Set(Some(utc_to_naive_local(v)));
+        am.last_notified_at = Set(Some(utc_to_datetime(v)));
     }
     let saved = if created {
         am.insert(state.db()).await?
@@ -170,7 +171,7 @@ pub async fn update(
         am.badge_count = Set(v);
     }
     if let Some(v) = req.last_notified_at {
-        am.last_notified_at = Set(v.map(utc_to_naive_local));
+        am.last_notified_at = Set(v.map(utc_to_datetime));
     }
     if let (Some(uid), true) = (req.user_id, caller.admin) {
         am.user_id = Set(Some(uid));

@@ -255,7 +255,8 @@ pub(crate) async fn reap_candidates(
     let protected: HashSet<u64> = newest.into_values().collect();
 
     let age_cutoff = (cfg.max_age_days > 0).then(|| {
-        chrono::Local::now().naive_local() - chrono::Duration::days(cfg.max_age_days as i64)
+        let age = jiff::SignedDuration::from_secs((cfg.max_age_days as i64).saturating_mul(86_400));
+        crate::util::time::local_now().saturating_sub(age)
     });
 
     let mut stats = ReapStats::default();
@@ -273,7 +274,7 @@ pub(crate) async fn reap_candidates(
         let over_bytes = cfg.max_bytes > 0 && used > cfg.max_bytes;
         let too_old = age_cutoff
             .zip(ev.start_date_time)
-            .is_some_and(|(cut, start)| start < cut);
+            .is_some_and(|(cut, start)| crate::util::time::civil(start) < cut);
 
         if !(over_free || over_bytes || too_old) {
             // Oldest-first: nothing further can be over-age, and space/quota
@@ -460,11 +461,9 @@ mod tests {
 
     fn event(id: u64, monitor_id: u32, disk_space: Option<u64>) -> events::Model {
         use rust_decimal::Decimal;
-        let start = chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            + chrono::Duration::minutes(id as i64);
+        let column = crate::util::time::db_datetime;
+        let start = jiff::civil::date(2026, 1, 1).at(0, 0, 0, 0)
+            + jiff::SignedDuration::from_mins(id as i64);
         events::Model {
             id,
             monitor_id,
@@ -472,8 +471,8 @@ mod tests {
             secondary_storage_id: None,
             name: "ev".into(),
             cause: None,
-            start_date_time: Some(start),
-            end_date_time: Some(start + chrono::Duration::minutes(1)),
+            start_date_time: Some(column(start)),
+            end_date_time: Some(column(start + jiff::SignedDuration::from_mins(1))),
             width: 0,
             height: 0,
             length: Decimal::new(0, 0),
@@ -666,7 +665,9 @@ mod tests {
         c.max_age_days = 1;
         let mut events = fifty_events_no_disk_space(); // all dated January 2026
         let mut fresh = event(99, 1, Some(1));
-        fresh.start_date_time = Some(chrono::Local::now().naive_local());
+        fresh.start_date_time = Some(crate::util::time::db_datetime(
+            crate::util::time::local_now(),
+        ));
         events.push(fresh);
         let stats = reap_candidates(&c, &io, &storage(), events, 0)
             .await

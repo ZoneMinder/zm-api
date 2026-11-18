@@ -33,7 +33,9 @@ impl From<&MonitorStatusModel> for MonitorStatusResponse {
             capture_fps: model.capture_fps.to_string(),
             analysis_fps: model.analysis_fps.to_string(),
             capture_bandwidth: model.capture_bandwidth,
-            updated_on: crate::util::timestamp_to_utc(model.updated_on).to_rfc3339(),
+            updated_on: crate::util::time::rfc3339_offset(crate::util::timestamp_to_utc(
+                model.updated_on,
+            )),
             alarm_state: None,
             alarms_disabled: None,
             analysing: None,
@@ -87,9 +89,7 @@ mod tests {
     /// UTC, not as that wall-clock labelled UTC.
     #[test]
     fn updated_on_is_the_local_column_value_in_utc() {
-        let instant = chrono::DateTime::parse_from_rfc3339("2026-10-23T21:30:15Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
+        let instant: jiff::Timestamp = "2026-10-23T21:30:15Z".parse().unwrap();
         let model = MonitorStatusModel {
             monitor_id: 1,
             status: Status::Connected,
@@ -99,7 +99,9 @@ mod tests {
             updated_on: crate::util::utc_to_timestamp(instant),
         };
         let resp = MonitorStatusResponse::from(&model);
-        let parsed = chrono::DateTime::parse_from_rfc3339(&resp.updated_on).unwrap();
+        let parsed: jiff::Timestamp = resp.updated_on.parse().unwrap();
         assert_eq!(parsed, instant);
+        // The numeric-offset spelling clients already receive.
+        assert_eq!(resp.updated_on, "2026-10-23T21:30:15+00:00");
     }
 }

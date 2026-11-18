@@ -23,7 +23,7 @@ async fn revoked_token_is_rejected_on_protected_routes() {
     let token = token_for(REVOKED_UID, UserPermissions::superuser());
     state
         .revocations
-        .revoke(REVOKED_UID, chrono::Utc::now().timestamp() + 1);
+        .revoke(REVOKED_UID, zm_api::util::time::unix_now() + 1);
     let app = TestApp::from_state(state);
 
     let resp = app.get("/api/v3/monitors", &token).await;
@@ -94,7 +94,7 @@ async fn revoked_token_is_rejected_on_every_documented_route() {
     let token = token_for(UID, UserPermissions::superuser());
     state
         .revocations
-        .revoke(UID, chrono::Utc::now().timestamp() + 1);
+        .revoke(UID, zm_api::util::time::unix_now() + 1);
     let app = TestApp::from_state(state);
 
     let doc = serde_json::to_value(zm_api::routes::served_openapi()).expect("openapi as json");

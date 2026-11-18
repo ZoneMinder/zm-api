@@ -21,8 +21,9 @@ pub async fn upsert<C: ConnectionTrait>(
     monitor_id: u32,
     name: &str,
     ciphertext: String,
-    now: chrono::NaiveDateTime,
+    now: jiff::civil::DateTime,
 ) -> Result<(), DbErr> {
+    let now = crate::util::time::db_datetime(now);
     let existing = zmnext_secret::Entity::find_by_id((monitor_id, name.to_string()))
         .one(db)
         .await?;

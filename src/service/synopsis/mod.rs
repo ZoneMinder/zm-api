@@ -67,7 +67,8 @@ pub struct SynopsisStatusView {
     pub url: Option<String>,
     pub tube_count: u32,
     #[schema(value_type = Option<String>, format = "date-time", example = "2026-07-02T12:34:56")]
-    pub expires_at: Option<chrono::NaiveDateTime>,
+    #[serde(with = "crate::util::datetime_format::optional")]
+    pub expires_at: Option<jiff::civil::DateTime>,
 }
 
 /// How many stills are composited at once: one per core, at least two. The
@@ -233,7 +234,7 @@ impl SynopsisService {
             status: row.status,
             url,
             tube_count: row.tube_count,
-            expires_at: row.expires_at,
+            expires_at: row.expires_at.map(crate::util::time::civil),
         })
     }
 
@@ -322,8 +323,8 @@ impl SynopsisService {
     pub async fn overview_still(
         &self,
         monitor_id: u32,
-        from: chrono::NaiveDateTime,
-        to: chrono::NaiveDateTime,
+        from: jiff::civil::DateTime,
+        to: jiff::civil::DateTime,
         class_filter: Vec<i64>,
     ) -> Result<Vec<u8>, SynopsisError> {
         let rows = repo::event_synopsis::find_by_monitor_created_between(
@@ -372,7 +373,7 @@ impl SynopsisService {
     /// the DB row for every synopsis whose `expires_at` has passed. Returns the
     /// number of rows cleaned.
     pub async fn run_retention_once(&self) -> Result<usize, SynopsisError> {
-        let now = chrono::Utc::now().naive_utc();
+        let now = crate::util::time::utc_now();
         let expired = repo::event_synopsis::find_expired(&self.db, now).await?;
         let mut cleaned = 0usize;
         for row in expired {

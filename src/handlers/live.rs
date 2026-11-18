@@ -711,7 +711,7 @@ pub async fn webrtc_websocket_handler(
         },
         (None, Some(g)) => Viewer {
             uid: g.uid,
-            since: chrono::Utc::now().timestamp(),
+            since: crate::util::time::unix_now(),
         },
         (None, None) => {
             return Err(AppError::UnauthorizedError(
@@ -1542,7 +1542,7 @@ pub async fn stream_monitor_events(
         },
         (None, Some(g)) => Viewer {
             uid: g.uid,
-            since: chrono::Utc::now().timestamp(),
+            since: crate::util::time::unix_now(),
         },
         (None, None) => {
             return Err(AppError::UnauthorizedError(
@@ -1688,7 +1688,7 @@ mod tests {
         let db = sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::MySql).into_connection();
         let state = AppState::for_test_with_db(db);
         let (tx, rx) = tokio::sync::broadcast::channel(4);
-        let since = chrono::Utc::now().timestamp();
+        let since = crate::util::time::unix_now();
         state.revocations.revoke(9, since + 1);
 
         let stream = status_changes(

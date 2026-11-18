@@ -176,7 +176,7 @@ async fn a_legacy_graph_is_migrated_on_read_and_resolves_for_the_worker() {
     let db = get_test_db().await.unwrap();
     let monitor = insert_monitor(&db, "zmnext_secrets_legacy").await.unwrap();
     let _mon = RowGuard::monitor(monitor.id);
-    let now = chrono::Utc::now().naive_utc();
+    let now = zm_api::util::time::utc_now();
     zm_api::repo::monitor_pipeline::upsert(
         &db,
         monitor.id,

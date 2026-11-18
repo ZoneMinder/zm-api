@@ -441,20 +441,21 @@ pub fn quarantine_target(
 }
 
 /// Parse the `YYYYmmddTHHMMSS` stamp a quarantine batch is filed under.
-pub fn parse_quarantine_stamp(name: &str) -> Option<chrono::NaiveDateTime> {
-    chrono::NaiveDateTime::parse_from_str(name, "%Y%m%dT%H%M%S").ok()
+pub fn parse_quarantine_stamp(name: &str) -> Option<jiff::civil::DateTime> {
+    jiff::civil::DateTime::strptime("%Y%m%dT%H%M%S", name).ok()
 }
 
 /// Quarantine batches older than the retention window.
 pub fn expired_quarantine_batches(
     quarantine_root: &Path,
-    now: chrono::NaiveDateTime,
+    now: jiff::civil::DateTime,
     retention_days: u64,
 ) -> Vec<PathBuf> {
     if retention_days == 0 {
         return Vec::new();
     }
-    let cutoff = now - chrono::Duration::days(retention_days as i64);
+    let window = jiff::SignedDuration::from_secs((retention_days as i64).saturating_mul(86_400));
+    let cutoff = now.saturating_sub(window);
     let Ok(entries) = std::fs::read_dir(quarantine_root) else {
         return Vec::new();
     };
@@ -719,8 +720,7 @@ mod tests {
         std::fs::create_dir_all(root.join("20260822T000000")).unwrap();
         std::fs::create_dir_all(root.join("not-a-stamp")).unwrap();
 
-        let now =
-            chrono::NaiveDateTime::parse_from_str("20260823T120000", "%Y%m%dT%H%M%S").unwrap();
+        let now = jiff::civil::date(2026, 8, 23).at(12, 0, 0, 0);
         let expired = expired_quarantine_batches(&root, now, 7);
 
         assert_eq!(expired.len(), 1, "only the batch older than 7 days");

@@ -169,7 +169,7 @@ async fn is_white(f: &Fixture, fid: &str) -> bool {
 async fn set_event(f: &Fixture, closed: bool, max_score_frame_id: u32) {
     zm_api::entity::events::ActiveModel {
         id: Set(f.event_id),
-        end_date_time: Set(closed.then(|| chrono::Utc::now().naive_utc())),
+        end_date_time: Set(closed.then(zm_api::util::time::db_utc_now)),
         max_score_frame_id: Set(Some(max_score_frame_id)),
         ..Default::default()
     }

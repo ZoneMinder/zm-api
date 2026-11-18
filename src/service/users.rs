@@ -42,7 +42,7 @@ async fn ensure_role_exists(state: &AppState, role_id: u32) -> AppResult<()> {
 /// A revocation floor that kills every token issued up to now, including
 /// those minted earlier in the current second (see `service::auth::logout`).
 fn revoke_now_floor() -> u64 {
-    (chrono::Utc::now().timestamp() + 1) as u64
+    (crate::util::time::unix_now() + 1) as u64
 }
 
 pub async fn update(
@@ -260,7 +260,7 @@ mod tests {
             .append_query_results::<UserModel, _, _>(vec![vec![user]])
             .into_connection();
         let state = AppState::for_test_with_db(db);
-        let issued = chrono::Utc::now().timestamp();
+        let issued = crate::util::time::unix_now();
         assert!(!state.revocations.is_revoked(6, issued));
         update(
             &state,
@@ -298,7 +298,7 @@ mod tests {
             }])
             .into_connection();
         let state = AppState::for_test_with_db(db);
-        let issued = chrono::Utc::now().timestamp();
+        let issued = crate::util::time::unix_now();
         delete(&state, 9).await.unwrap();
         assert!(state.revocations.is_revoked(9, issued));
     }

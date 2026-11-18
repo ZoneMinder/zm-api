@@ -66,7 +66,7 @@ pub async fn export_events(
 
     let name = format!(
         "attachment; filename=\"zm-events-{}.zip\"",
-        chrono::Local::now().format("%Y%m%d-%H%M%S")
+        crate::util::time::local_now().strftime("%Y%m%d-%H%M%S")
     );
     let mut res = Body::from_stream(tokio_util::io::ReaderStream::new(reader)).into_response();
     let h = res.headers_mut();

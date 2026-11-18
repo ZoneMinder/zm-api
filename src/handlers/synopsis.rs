@@ -408,12 +408,12 @@ pub async fn get_range_synopsis(
             "`to` must be >= `from`".to_string(),
         ));
     }
-    let from = chrono::DateTime::from_timestamp(query.from, 0)
-        .ok_or_else(|| AppError::BadRequestError("invalid `from` timestamp".to_string()))?
-        .naive_utc();
-    let to = chrono::DateTime::from_timestamp(query.to, 0)
-        .ok_or_else(|| AppError::BadRequestError("invalid `to` timestamp".to_string()))?
-        .naive_utc();
+    let from = jiff::Timestamp::from_second(query.from)
+        .map(crate::util::time::utc_civil)
+        .map_err(|_| AppError::BadRequestError("invalid `from` timestamp".to_string()))?;
+    let to = jiff::Timestamp::from_second(query.to)
+        .map(crate::util::time::utc_civil)
+        .map_err(|_| AppError::BadRequestError("invalid `to` timestamp".to_string()))?;
     let classes = parse_classes(&query.class);
 
     let jpeg = match svc
