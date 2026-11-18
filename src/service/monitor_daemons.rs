@@ -97,9 +97,28 @@ fn log_manager(
     }
 }
 
+/// Whether another server's daemon manager runs this monitor. zm-api's own
+/// manager, unlike zmdc.pl, starts whatever it is asked to, so the takeover
+/// paths below check first: starting another server's monitor here would
+/// capture the camera twice (#230).
+fn runs_elsewhere(state: &AppState, m: &MonitorModel) -> bool {
+    let elsewhere = matches!(
+        crate::cluster::owner(state.server_id, m.server_id),
+        crate::cluster::Owner::Peer(_)
+    );
+    if elsewhere {
+        info!(
+            "monitor {}: Servers.Id {:?} runs its daemons, not this server",
+            m.id, m.server_id
+        );
+    }
+    elsewhere
+}
+
 /// A monitor was created.
 pub async fn created(state: &AppState, m: &MonitorModel) {
     match &state.daemon_manager {
+        Some(_) if runs_elsewhere(state, m) => {}
         Some(dm) => log_manager(m.id, "start", dm.start_monitor(m.id).await),
         None => passive_start(state, m).await,
     }
@@ -108,6 +127,10 @@ pub async fn created(state: &AppState, m: &MonitorModel) {
 /// A monitor was saved: stop its daemons as they were, start them as saved.
 pub async fn updated(state: &AppState, old: &MonitorModel, new: &MonitorModel) {
     match &state.daemon_manager {
+        // Moved to another server: stop it here, and that server starts it.
+        Some(dm) if runs_elsewhere(state, new) => {
+            log_manager(new.id, "stop", dm.stop_monitor(new.id).await)
+        }
         Some(dm) => log_manager(new.id, "restart", dm.restart_monitor(new.id).await),
         None => {
             if old.r#type != MonitorType::WebSite {
@@ -128,6 +151,9 @@ pub async fn deleting(state: &AppState, m: &MonitorModel) {
 
 /// `PATCH /monitors/{id}/state`.
 pub async fn set_state(state: &AppState, m: &MonitorModel, action: Action) {
+    if state.daemon_manager.is_some() && runs_elsewhere(state, m) {
+        return;
+    }
     match (&state.daemon_manager, action) {
         (Some(dm), Action::Start) => log_manager(m.id, "start", dm.start_monitor(m.id).await),
         (Some(dm), Action::Stop) => log_manager(m.id, "stop", dm.stop_monitor(m.id).await),

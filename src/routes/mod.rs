@@ -508,7 +508,16 @@ pub fn create_router_app(state: AppState) -> Router {
             crate::service::monitor_acl::monitor_row_gate,
         ))
     };
-    let monitors_routes = monitor_gate(monitors::add_monitor_routes(Router::new()));
+    // Multi-server (#230): a request for a monitor another server runs is
+    // relayed there. Added before each guard so it runs after it: this server
+    // authenticates the caller and checks the monitor first.
+    let to_owner = |router: Router<AppState>| {
+        router.route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::cluster::forward::forward_to_owner,
+        ))
+    };
+    let monitors_routes = monitor_gate(to_owner(monitors::add_monitor_routes(Router::new())));
     let monitor_preset_routes = protect(
         monitor_presets::add_monitor_preset_routes(Router::new()),
         Feature::Monitors,
@@ -575,10 +584,12 @@ pub fn create_router_app(state: AppState) -> Router {
     // feature-level RBAC check runs first and the guard's DB query is only
     // reached after the caller has at least `Control:View`.
     let ptz_routes = protect(
-        ptz::add_ptz_routes(Router::new()).route_layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            crate::service::monitor_acl::monitor_path_guard,
-        )),
+        to_owner(ptz::add_ptz_routes(Router::new())).route_layer(
+            axum::middleware::from_fn_with_state(
+                state.clone(),
+                crate::service::monitor_acl::monitor_path_guard,
+            ),
+        ),
         Feature::Control,
     );
     let trigger_x10_routes = protect(
@@ -621,10 +632,12 @@ pub fn create_router_app(state: AppState) -> Router {
     // feature-level RBAC check runs first and the guard's DB query is only
     // reached after the caller has at least `Stream:View`.
     let live_routes = protect(
-        live::add_live_routes(Router::new()).route_layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            crate::service::monitor_acl::monitor_stream_guard,
-        )),
+        to_owner(live::add_live_routes(Router::new())).route_layer(
+            axum::middleware::from_fn_with_state(
+                state.clone(),
+                crate::service::monitor_acl::monitor_stream_guard,
+            ),
+        ),
         Feature::Stream,
     );
 
@@ -676,7 +689,7 @@ pub fn create_router_app(state: AppState) -> Router {
     let monitor_action_routes =
         monitor_gate(monitor_actions::add_monitor_action_routes(Router::new()));
     let monitor_action_run_route = authz::protect_at(
-        monitor_actions::add_monitor_action_run_route(Router::new()),
+        to_owner(monitor_actions::add_monitor_action_run_route(Router::new())),
         Feature::Control,
         authz::Level::View,
         state.clone(),

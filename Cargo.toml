@@ -94,7 +94,7 @@ openssl = "0.10"
 once_cell = "1"
 rand = "0.10"
 regex = "1"
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { version = "0.13", features = ["json", "stream"] }
 rust_decimal = "1"
 test-context = "0.5"
 thiserror = "2"

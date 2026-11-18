@@ -15,6 +15,8 @@ async fn with_counts(
         .map(|m| {
             let mut r = ServerResponse::from(m);
             r.monitor_count = counts.get(&m.id).copied().unwrap_or(0);
+            r.api_url = state.cluster.base_url(m.id, m.hostname.as_deref());
+            r.is_this_server = state.server_id == Some(m.id);
             r
         })
         .collect())

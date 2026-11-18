@@ -3,6 +3,7 @@ use axum::Json;
 use garde::Validate;
 use tracing::{info, warn};
 
+use crate::cluster::forward::restart_on_owner;
 use crate::dto::request::monitor::MonitorListParams;
 use crate::dto::request::{
     AlarmControlRequest, CreateMonitorRequest, MonitorStateRequest, UpdateMonitorRequest,
@@ -113,6 +114,7 @@ pub async fn create_monitor(
     State(state): State<AppState>,
     claims: UserClaims,
     scope: MonitorScope,
+    headers: axum::http::HeaderMap,
     Json(req): Json<CreateMonitorRequest>,
 ) -> AppResult<Json<MonitorResponse>> {
     // `Monitors: Create` is checked by the route's `require_monitor_create`.
@@ -139,7 +141,11 @@ pub async fn create_monitor(
     // Log the name only: the request body carries camera RTSP/ONVIF credentials.
     info!("Creating new monitor: {}.", req.name);
     match service::monitor::create(&state, req).await {
-        Ok(monitor) => Ok(Json(monitor)),
+        Ok(monitor) => {
+            // Multi-server: the server that runs it starts its daemons.
+            restart_on_owner(&state, &headers, monitor.id, monitor.server_id).await;
+            Ok(Json(monitor))
+        }
         Err(e) => {
             warn!("Failed to create monitor: {e:?}.");
             Err(e)
@@ -171,13 +177,18 @@ pub async fn update_monitor(
     Path(id): Path<u32>,
     claims: UserClaims,
     scope: MonitorScope,
+    headers: axum::http::HeaderMap,
     Json(req): Json<UpdateMonitorRequest>,
 ) -> AppResult<Json<MonitorResponse>> {
     req.validate().map_err(AppError::InvalidInputError)?;
     // Log the id only: the request body carries camera RTSP/ONVIF credentials.
     info!("Editing monitor with ID: {id}.");
     match service::monitor::update(&state, id, req, &scope, &claims.perms).await {
-        Ok(monitor) => Ok(Json(monitor)),
+        Ok(monitor) => {
+            // Multi-server: a monitor moved to another server starts there.
+            restart_on_owner(&state, &headers, monitor.id, monitor.server_id).await;
+            Ok(Json(monitor))
+        }
         Err(e) => {
             warn!("Failed to edit monitor: {e:?}.");
             Err(e)

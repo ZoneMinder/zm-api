@@ -465,7 +465,7 @@ pub async fn zone_row_gate(
     gate_monitor(&state, mid, request, next).await
 }
 
-fn path_monitor_id(params: &RawPathParams) -> Option<u32> {
+pub(crate) fn path_monitor_id(params: &RawPathParams) -> Option<u32> {
     params
         .iter()
         .find(|(key, _)| *key == "monitor_id" || *key == "id")

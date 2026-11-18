@@ -3842,8 +3842,6 @@
         "tags": [
           "Events"
         ],
-        "summary": "Export events as a zip",
-        "description": "Streams a zip, built as it goes, with a `{event_id}/` folder per event\nholding the parts asked for: `details` (`event.json`), `frames`\n(`frames.json`), `images`, `video` and `misc` (the event directory's other\nfiles). Every id is checked first: one that doesn't exist or isn't\nvisible to the caller is a 404 and nothing is sent.",
         "operationId": "exportEvents",
         "requestBody": {
           "content": {
@@ -21995,6 +21993,32 @@
           },
           {
             "type": "object",
+            "description": "Another server of a multi-server install did not answer a relayed\nrequest, or answered it in a way that only a setup fault explains.",
+            "required": [
+              "BadGatewayError"
+            ],
+            "properties": {
+              "BadGatewayError": {
+                "type": "string",
+                "description": "Another server of a multi-server install did not answer a relayed\nrequest, or answered it in a way that only a setup fault explains."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The request is for another server's monitor and this server can't\nrelay it. The message names the server that can answer.",
+            "required": [
+              "MisdirectedError"
+            ],
+            "properties": {
+              "MisdirectedError": {
+                "type": "string",
+                "description": "The request is for another server's monitor and this server can't\nrelay it. The message names the server that can answer."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A 503 for something that will be back shortly, with a Retry-After of\nthis many seconds.",
             "required": [
               "RetryLaterError"
@@ -24497,7 +24521,6 @@
       },
       "CreateFilterRequest": {
         "type": "object",
-        "description": "Create a saved event filter. `name` and `query_json` are required; every\nother column of the `Filters` table is optional and falls back to the\nschema default when omitted (flags `0`, `execute_interval` `60`,\n`email_format` `Individual`).",
         "required": [
           "name"
         ],
@@ -26969,7 +26992,8 @@
                 "minimum": 0
               },
               "username": {
-                "type": "string"
+                "type": "string",
+                "description": "The characters login accepts. Anything else could not sign in, and a\ncontrol character would end up in the log lines that name the user."
               }
             }
           }
@@ -33904,6 +33928,13 @@
           "zmeventnotification"
         ],
         "properties": {
+          "api_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where this server's zm-api is, as the server answering works it out:\nits `cluster.peers` setting, else its own scheme and port on this\nrow's hostname. Absent when the row has no hostname. A client does not\nneed it: any server relays requests for another server's monitors."
+          },
           "hostname": {
             "type": [
               "string",
@@ -33914,6 +33945,10 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          },
+          "is_this_server": {
+            "type": "boolean",
+            "description": "Whether this is the server that answered."
           },
           "latitude": {
             "type": [
@@ -38465,7 +38500,7 @@
                   "string",
                   "null"
                 ],
-                "description": "New password (re-hashed with bcrypt; never stored in plaintext)."
+                "description": "New password (re-hashed with bcrypt; never stored in plaintext).\nEmpty leaves the password as it is."
               },
               "phone": {
                 "type": [

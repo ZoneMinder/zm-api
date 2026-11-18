@@ -13,6 +13,7 @@ use self::{
     synopsis::SynopsisConfig, web::WebConfig, zmnext::ZmNextConfig,
 };
 
+pub mod cluster;
 pub mod daemon;
 pub mod db;
 pub mod env;
@@ -63,6 +64,9 @@ pub struct AppConfig {
     /// zmtelemetry). Each independently switchable; all off by default.
     #[serde(default)]
     pub maintenance: MaintenanceConfig,
+    /// Multi-server installs: reaching the zm-api on the other servers.
+    #[serde(default)]
+    pub cluster: cluster::ClusterConfig,
 }
 
 impl AppConfig {

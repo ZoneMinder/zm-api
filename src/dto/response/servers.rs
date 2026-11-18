@@ -25,6 +25,15 @@ pub struct ServerResponse {
     /// Monitors assigned to this server (`Monitors.ServerId`).
     #[serde(default)]
     pub monitor_count: u64,
+    /// Where this server's zm-api is, as the server answering works it out:
+    /// its `cluster.peers` setting, else its own scheme and port on this
+    /// row's hostname. Absent when the row has no hostname. A client does not
+    /// need it: any server relays requests for another server's monitors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_url: Option<String>,
+    /// Whether this is the server that answered.
+    #[serde(default)]
+    pub is_this_server: bool,
 }
 
 impl From<&crate::entity::servers::Model> for ServerResponse {
@@ -48,6 +57,8 @@ impl From<&crate::entity::servers::Model> for ServerResponse {
             latitude: m.latitude.and_then(|d| d.to_f64()),
             longitude: m.longitude.and_then(|d| d.to_f64()),
             monitor_count: 0,
+            api_url: None,
+            is_this_server: false,
         }
     }
 }

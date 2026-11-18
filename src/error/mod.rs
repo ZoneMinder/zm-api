@@ -46,6 +46,14 @@ pub enum AppError {
     InternalServerError(String),
     #[error("service unavailable: {0}")]
     ServiceUnavailableError(String),
+    /// Another server of a multi-server install did not answer a relayed
+    /// request, or answered it in a way that only a setup fault explains.
+    #[error("bad gateway: {0}")]
+    BadGatewayError(String),
+    /// The request is for another server's monitor and this server can't
+    /// relay it. The message names the server that can answer.
+    #[error("misdirected request: {0}")]
+    MisdirectedError(String),
     /// A 503 for something that will be back shortly, with a Retry-After of
     /// this many seconds.
     #[error("service unavailable: {0}")]
@@ -238,6 +246,18 @@ impl AppError {
                 None,
                 vec![],
                 StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            BadGatewayError(_err) => (
+                "BAD_GATEWAY_ERROR".to_string(),
+                None,
+                vec![],
+                StatusCode::BAD_GATEWAY,
+            ),
+            MisdirectedError(_err) => (
+                "MISDIRECTED_REQUEST_ERROR".to_string(),
+                None,
+                vec![],
+                StatusCode::MISDIRECTED_REQUEST,
             ),
             RetryLaterError(_err, secs) => (
                 "SERVICE_UNAVAILABLE_ERROR".to_string(),
