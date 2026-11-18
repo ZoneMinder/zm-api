@@ -13,6 +13,7 @@ pub struct CreateSnapshotRequest {
     pub created_by: Option<i32>,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00")]
     #[garde(skip)]
+    #[serde(default, with = "crate::util::datetime_format::optional")]
     pub created_on: Option<Civil>,
 }
 
@@ -26,5 +27,6 @@ pub struct UpdateSnapshotRequest {
     pub created_by: Option<i32>,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00")]
     #[garde(skip)]
+    #[serde(default, with = "crate::util::datetime_format::optional")]
     pub created_on: Option<Civil>,
 }

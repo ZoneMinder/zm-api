@@ -10,6 +10,7 @@ pub struct TagResponse {
     pub id: u64,
     pub name: String,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00Z")]
+    #[serde(serialize_with = "crate::util::time::serialize_option_rfc3339_z")]
     pub create_date: Option<Timestamp>,
     /// Number of events with this tag
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -58,5 +59,26 @@ impl From<PaginatedResponse<TagResponse>> for PaginatedTagsResponse {
             current_page: r.current_page,
             last_page: r.last_page,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_date_keeps_its_spelling() {
+        let mut r = TagResponse {
+            id: 1,
+            name: "t".into(),
+            create_date: Some("2025-01-15T10:30:00.5Z".parse().unwrap()),
+            event_count: None,
+        };
+        let json = serde_json::to_value(&r).unwrap();
+        assert_eq!(json["create_date"], "2025-01-15T10:30:00.500Z");
+        let back: TagResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(back.create_date, r.create_date);
+        r.create_date = None;
+        assert!(serde_json::to_value(&r).unwrap()["create_date"].is_null());
     }
 }

@@ -1,5 +1,6 @@
 //! Unix domain socket server for legacy IPC compatibility.
 
+use jiff::civil::DateTime as Civil;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -335,17 +336,27 @@ async fn execute_command(cmd: DaemonCommand, manager: &Arc<DaemonManager>) -> Da
     }
 }
 
+/// The local wall-clock at which a process with this uptime started. The
+/// subtraction is on the instant, so a DST change in between does not shift it.
+fn started_at(now: jiff::Timestamp, uptime_seconds: u64, zone: &jiff::tz::TimeZone) -> Civil {
+    let uptime = jiff::SignedDuration::from_secs(i64::try_from(uptime_seconds).unwrap_or(i64::MAX));
+    now.saturating_sub(uptime)
+        .unwrap_or(now)
+        .to_zoned(zone.clone())
+        .datetime()
+}
+
 /// zmdc.pl's `status` output, line for line: the web console looks for
 /// `'<command>' running` in it (#83).
 fn legacy_status_text(status: &SystemStatus) -> String {
-    let now = crate::util::time::local_now();
+    let now = jiff::Timestamp::now();
+    let zone = jiff::tz::TimeZone::system();
     status
         .daemons
         .iter()
         .map(|d| match d.state {
             ProcessState::Running | ProcessState::Starting => {
-                let uptime = jiff::SignedDuration::from_secs(d.uptime_seconds.unwrap_or(0) as i64);
-                let since = now.saturating_sub(uptime);
+                let since = started_at(now, d.uptime_seconds.unwrap_or(0), &zone);
                 format!(
                     "'{}' running since {}, pid = {}",
                     d.id,
@@ -363,6 +374,20 @@ fn legacy_status_text(status: &SystemStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 03:30 in New York just after the clocks went forward: two hours earlier
+    /// was 00:30, not the 01:30 that wall-clock subtraction gives.
+    #[test]
+    fn a_start_time_is_right_across_a_dst_change() {
+        let zone = jiff::tz::TimeZone::get("America/New_York").unwrap();
+        let now: jiff::Timestamp = "2026-03-08T07:30:00Z".parse().unwrap();
+        assert_eq!(
+            started_at(now, 2 * 3600, &zone),
+            jiff::civil::date(2026, 3, 8).at(0, 30, 0, 0)
+        );
+        // An uptime too large to subtract leaves the earliest instant jiff has.
+        assert!(started_at(now, u64::MAX, &zone) < jiff::civil::date(1, 1, 1).at(0, 0, 0, 0));
+    }
     use crate::daemon::config::DaemonConfig;
     use crate::daemon::ManagedProcess;
 

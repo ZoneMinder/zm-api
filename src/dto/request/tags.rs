@@ -9,6 +9,7 @@ pub struct CreateTagRequest {
     pub name: String,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00Z")]
     #[garde(skip)]
+    #[serde(serialize_with = "crate::util::time::serialize_option_rfc3339_z")]
     pub create_date: Option<Timestamp>,
 }
 
@@ -18,6 +19,7 @@ pub struct UpdateTagRequest {
     pub name: Option<String>,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00Z")]
     #[garde(skip)]
+    #[serde(serialize_with = "crate::util::time::serialize_option_rfc3339_z")]
     pub create_date: Option<Timestamp>,
 }
 

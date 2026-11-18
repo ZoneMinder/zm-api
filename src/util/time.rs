@@ -9,7 +9,7 @@
 
 use jiff::civil::DateTime as Civil;
 use jiff::tz::TimeZone;
-use jiff::{Timestamp, Zoned};
+use jiff::{SignedDuration, Timestamp, Zoned};
 use sea_orm::prelude::{DateTime as DbDateTime, DateTimeUtc as DbDateTimeUtc};
 
 /// Seconds since the Unix epoch, for token claims and expiry checks.
@@ -49,9 +49,22 @@ pub fn civil_utc(c: Civil) -> Timestamp {
     }
 }
 
+const EPOCH: Civil = Civil::constant(1970, 1, 1, 0, 0, 0, 0);
+
 /// A `DATETIME` column value as a jiff civil datetime. The digits are unchanged.
+///
+/// This counts from the epoch in civil arithmetic and never goes through
+/// [`Timestamp`], whose range stops short of the last day MySQL can store
+/// (`9999-12-31`).
 pub fn civil(column: DbDateTime) -> Civil {
-    utc_civil(instant(column.and_utc()))
+    let utc = column.and_utc();
+    let since_epoch = SignedDuration::new(utc.timestamp(), utc.timestamp_subsec_nanos() as i32);
+    match EPOCH.checked_add(since_epoch) {
+        Ok(c) => c,
+        // chrono's range is wider than jiff's (years -9999 to 9999).
+        Err(_) if since_epoch.is_negative() => Civil::MIN,
+        Err(_) => Civil::MAX,
+    }
 }
 
 /// The instant of a `DATETIME` column that holds UTC digits, as zm-api's own
@@ -63,7 +76,14 @@ pub fn utc_instant(column: DbDateTime) -> Timestamp {
 
 /// A jiff civil datetime as a value to bind to a `DATETIME` column.
 pub fn db_datetime(c: Civil) -> DbDateTime {
-    db_instant(civil_utc(c)).naive_utc()
+    let since_epoch = c.duration_since(EPOCH);
+    let nanos = since_epoch.as_nanos();
+    let secs = nanos.div_euclid(1_000_000_000) as i64;
+    let sub = nanos.rem_euclid(1_000_000_000) as u32;
+    // jiff's range sits inside chrono's, so this always succeeds.
+    DbDateTimeUtc::from_timestamp(secs, sub)
+        .unwrap_or_default()
+        .naive_utc()
 }
 
 /// A chrono UTC instant as a jiff timestamp. No zone arithmetic: see
@@ -138,6 +158,17 @@ pub fn serialize_rfc3339_z<S: serde::Serializer>(t: &Timestamp, s: S) -> Result<
     s.serialize_str(&rfc3339_z(*t))
 }
 
+/// `serialize_with` for an optional instant, in [`rfc3339_z`]'s spelling.
+pub fn serialize_option_rfc3339_z<S: serde::Serializer>(
+    t: &Option<Timestamp>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    match t {
+        Some(t) => s.serialize_str(&rfc3339_z(*t)),
+        None => s.serialize_none(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,6 +179,23 @@ mod tests {
         let column = db_datetime(c);
         assert_eq!(column.to_string(), "2026-10-23 21:30:15.250");
         assert_eq!(civil(column), c);
+    }
+
+    /// MySQL's whole `DATETIME` range, including the day jiff's `Timestamp`
+    /// cannot reach, and a value before the epoch.
+    #[test]
+    fn a_datetime_column_keeps_its_digits_at_the_edges() {
+        for (text, chrono_text) in [
+            ("9999-12-31T12:00:00", "9999-12-31 12:00:00"),
+            ("9999-12-31T23:59:59.999999", "9999-12-31 23:59:59.999999"),
+            ("1000-01-01T00:00:00", "1000-01-01 00:00:00"),
+            ("1969-12-31T23:59:59.5", "1969-12-31 23:59:59.500"),
+        ] {
+            let c: Civil = text.parse().unwrap();
+            let column = db_datetime(c);
+            assert_eq!(column.to_string(), chrono_text);
+            assert_eq!(civil(column), c);
+        }
     }
 
     #[test]

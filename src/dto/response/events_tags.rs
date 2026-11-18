@@ -15,6 +15,7 @@ pub struct EventTagResponse {
     #[schema(example = 1)]
     pub event_id: u64,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00Z")]
+    #[serde(serialize_with = "crate::util::time::serialize_option_rfc3339_z")]
     pub assigned_date: Option<Timestamp>,
     #[schema(example = 1)]
     pub assigned_by: Option<u32>,
@@ -109,6 +110,7 @@ pub struct TagDetailResponse {
     #[schema(example = "Important")]
     pub name: String,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00Z")]
+    #[serde(serialize_with = "crate::util::time::serialize_option_rfc3339_z")]
     pub create_date: Option<Timestamp>,
     pub events: Vec<EventSummary>,
     #[schema(example = 100)]
