@@ -497,7 +497,9 @@ use crate::util::claim::UserClaims;
             // daemons
             crate::dto::request::daemon::ApplyStateRequest,
             crate::dto::request::daemon::StartDaemonRequest,
+            crate::dto::response::daemon::AllServersResponse,
             crate::dto::response::daemon::DaemonActionResponse,
+            crate::dto::response::daemon::ServerResult,
             crate::dto::response::daemon::DaemonListResponse,
             crate::dto::response::daemon::DaemonStatusResponse,
             crate::dto::response::daemon::SystemStatusResponse,

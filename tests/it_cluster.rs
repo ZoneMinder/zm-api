@@ -9,113 +9,18 @@
 
 mod common;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use axum::body::Bytes;
-use axum::extract::{Request, State};
-use axum::http::{header, HeaderMap, Method, StatusCode};
-use axum::response::{IntoResponse, Response};
-use axum::Router;
+use axum::http::{header, Method, StatusCode};
 use common::assertions::{assert_error, assert_status};
-use common::fixtures::{insert_monitor, RowGuard};
+use common::fixtures::RowGuard;
 use common::harness::{superuser_token, TestApp};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use serde_json::json;
 use zm_api::cluster::Cluster;
 use zm_api::configure::cluster::ClusterConfig;
-use zm_api::entity::monitors::{ActiveModel as MonitorActiveModel, Model as MonitorModel};
 
-const HERE: u32 = 1;
-const THERE: u32 = 2;
-
-/// One request the stub received.
-#[derive(Clone)]
-struct Seen {
-    method: Method,
-    path_and_query: String,
-    headers: HeaderMap,
-    body: Bytes,
-}
-
-#[derive(Clone)]
-struct Stub {
-    status: StatusCode,
-    seen: Arc<Mutex<Vec<Seen>>>,
-}
-
-struct Peer {
-    url: String,
-    seen: Arc<Mutex<Vec<Seen>>>,
-}
-
-impl Peer {
-    fn seen(&self) -> Vec<Seen> {
-        self.seen.lock().unwrap().clone()
-    }
-}
-
-async fn record(State(stub): State<Stub>, request: Request) -> Response {
-    let (parts, body) = request.into_parts();
-    let body = axum::body::to_bytes(body, usize::MAX).await.unwrap();
-    stub.seen.lock().unwrap().push(Seen {
-        method: parts.method,
-        path_and_query: parts
-            .uri
-            .path_and_query()
-            .map(|pq| pq.as_str().to_string())
-            .unwrap_or_default(),
-        headers: parts.headers,
-        body,
-    });
-    (
-        stub.status,
-        [
-            (header::CONTENT_TYPE, "text/plain"),
-            (header::HeaderName::from_static("x-answered-by"), "2"),
-        ],
-        "from server 2",
-    )
-        .into_response()
-}
-
-/// Server 2: answers every request with `status`.
-async fn peer(status: StatusCode) -> Peer {
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let router = Router::new().fallback(record).with_state(Stub {
-        status,
-        seen: seen.clone(),
-    });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
-    Peer { url, seen }
-}
-
-/// The app as server 1, with server 2 at `peer_url` (if any).
-async fn server_one(peer_url: Option<&str>) -> TestApp {
-    let mut config = ClusterConfig {
-        connect_timeout_secs: 1,
-        ..Default::default()
-    };
-    if let Some(url) = peer_url {
-        config.peers.insert(THERE.to_string(), url.to_string());
-    }
-    TestApp::spawn_with(move |state| {
-        state.server_id = Some(HERE);
-        state.cluster = Arc::new(Cluster::new(Some(HERE), &config, 0, false));
-    })
-    .await
-}
-
-/// A monitor that `server` runs.
-async fn monitor_on(db: &DatabaseConnection, label: &str, server: u32) -> MonitorModel {
-    let monitor = insert_monitor(db, label).await.expect("monitor");
-    let mut row: MonitorActiveModel = monitor.into();
-    row.server_id = Set(Some(server));
-    row.update(db).await.expect("set server")
-}
+use common::cluster::{monitor_on, peer, server_one, HERE, THERE};
 
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]

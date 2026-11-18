@@ -138,6 +138,12 @@ pub struct DaemonActionResponse {
     pub success: bool,
     /// Human-readable message
     pub message: String,
+    /// What the other servers of a multi-server install did, when the action
+    /// reaches them too (applying a run state does). `success` and `message`
+    /// describe this server only. Absent on a single-server install and for
+    /// actions that stay on one server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub servers: Option<Vec<ServerResult>>,
 }
 
 impl DaemonActionResponse {
@@ -146,6 +152,7 @@ impl DaemonActionResponse {
         Self {
             success: true,
             message: message.into(),
+            servers: None,
         }
     }
 
@@ -154,6 +161,85 @@ impl DaemonActionResponse {
         Self {
             success: false,
             message: message.into(),
+            servers: None,
         }
     }
+}
+
+/// What one server of a multi-server install answered to a request that went
+/// to several of them.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ServerResult {
+    /// The server's `Servers.Id`. Null for the one server of an install whose
+    /// host has no server id.
+    pub server_id: Option<u32>,
+    /// The server's name.
+    pub name: String,
+    /// Whether the server answered with a success status.
+    pub ok: bool,
+    /// The HTTP status the server answered with, or the one this server
+    /// gives for not reaching it (502 no answer, 421 no address).
+    pub status: u16,
+    /// The JSON the server answered, as it would for the same request sent to
+    /// it alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub result: Option<serde_json::Value>,
+    /// Why the request failed on this server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl ServerResult {
+    /// A server answered with `status` and `body`.
+    pub fn answered(server_id: Option<u32>, name: String, status: u16, body: &[u8]) -> Self {
+        let ok = (200..300).contains(&status);
+        let json: Option<serde_json::Value> = serde_json::from_slice(body).ok();
+        let error = (!ok).then(|| {
+            json.as_ref()
+                .and_then(|v| v.get("error_message").or_else(|| v.get("message")))
+                .and_then(|m| m.as_str())
+                .map_or_else(|| format!("answered {status}"), str::to_string)
+        });
+        Self {
+            server_id,
+            name,
+            ok,
+            status,
+            result: if ok { json } else { None },
+            error,
+        }
+    }
+
+    /// The request never got an answer from the server.
+    pub fn failed(server_id: Option<u32>, name: String, status: u16, error: String) -> Self {
+        Self {
+            server_id,
+            name,
+            ok: false,
+            status,
+            result: None,
+            error: Some(error),
+        }
+    }
+}
+
+/// The answer to a request sent with `server_id=all`: one entry per server,
+/// this server first, then the others by id. The HTTP status is 207 whenever
+/// the request ran, even if every server failed; each entry says how it went.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AllServersResponse {
+    pub servers: Vec<ServerResult>,
+}
+
+/// Which server a request is for.
+#[derive(Debug, Clone, utoipa::IntoParams)]
+#[allow(dead_code)]
+#[into_params(parameter_in = Query)]
+pub struct ServerTargetQuery {
+    /// Absent: this server. A server's number: that server, relayed to its
+    /// zm-api when it is not this one. `all`: every server, answered with 207
+    /// and one entry per server (see `AllServersResponse`). A request that
+    /// another server already relayed is always handled here.
+    pub server_id: Option<String>,
 }

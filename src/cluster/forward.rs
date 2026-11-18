@@ -165,7 +165,7 @@ fn path_event_id(params: &RawPathParams) -> Option<u64> {
 /// another server already relayed, one for a server with no address, and a
 /// WebSocket; send anything else on. `what` finishes with "belongs to" or
 /// "are on", and reads as the start of every refusal.
-async fn relay_to_server(
+pub(crate) async fn relay_to_server(
     state: &AppState,
     server_id: u32,
     what: &str,
@@ -204,7 +204,7 @@ async fn relay_to_server(
 /// The path and query the client sent. A nested router strips its prefix
 /// from the request's own URI, so the original is read from the extension
 /// axum keeps.
-fn original_path_and_query(request: &Request) -> String {
+pub(crate) fn original_path_and_query(request: &Request) -> String {
     let uri = request
         .extensions()
         .get::<OriginalUri>()
@@ -275,7 +275,7 @@ fn end_to_end(headers: &HeaderMap) -> HeaderMap {
 }
 
 /// Send `request` to `peer` and stream its answer back.
-async fn relay(
+pub(crate) async fn relay(
     state: &AppState,
     peer: &Peer,
     path_and_query: &str,

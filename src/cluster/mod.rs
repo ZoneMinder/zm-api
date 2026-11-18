@@ -15,6 +15,7 @@
 //! the same JWT key files.
 
 pub mod forward;
+pub mod system;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -121,6 +122,14 @@ impl Peer {
     pub fn label(&self) -> String {
         format!("server {} ({})", self.id, self.name)
     }
+}
+
+/// Another server of the install, with its address if it has one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Member {
+    pub id: u32,
+    pub name: String,
+    pub peer: Option<Peer>,
 }
 
 #[derive(Debug, Clone)]
@@ -315,6 +324,37 @@ impl Cluster {
             name,
             base_url,
         }))
+    }
+
+    /// Every `Servers` row except this server's own, by id, each with its
+    /// address or the fact that it has none.
+    pub async fn other_servers(&self, db: &DatabaseConnection) -> AppResult<Vec<Member>> {
+        let servers = self.servers(db).await?;
+        let mut members: Vec<Member> = servers
+            .iter()
+            .filter(|(id, _)| Some(**id) != self.this_server)
+            .map(|(id, row)| Member {
+                id: *id,
+                name: row.name.clone(),
+                peer: self
+                    .base_url(*id, row.hostname.as_deref())
+                    .map(|base_url| Peer {
+                        id: *id,
+                        name: row.name.clone(),
+                        base_url,
+                    }),
+            })
+            .collect();
+        members.sort_by_key(|m| m.id);
+        Ok(members)
+    }
+
+    /// This server's name from its `Servers` row, if it has one.
+    pub async fn this_name(&self, db: &DatabaseConnection) -> AppResult<Option<String>> {
+        let Some(id) = self.this_server else {
+            return Ok(None);
+        };
+        Ok(self.servers(db).await?.get(&id).map(|row| row.name.clone()))
     }
 
     /// The v3 address of a server: the settings override, else this server's
