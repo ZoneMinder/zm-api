@@ -183,7 +183,7 @@ pub struct ServerResult {
     /// The JSON the server answered, as it would for the same request sent to
     /// it alone.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<Object>)]
+    #[schema(value_type = Option<serde_json::Value>)]
     pub result: Option<serde_json::Value>,
     /// Why the request failed on this server.
     #[serde(skip_serializing_if = "Option::is_none")]

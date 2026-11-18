@@ -522,8 +522,9 @@ pub fn create_router_app(state: AppState) -> Router {
         monitor_presets::add_monitor_preset_routes(Router::new()),
         Feature::Monitors,
     );
-    let monitor_status_routes =
-        monitor_gate(monitor_status::add_monitor_status_routes(Router::new()));
+    let monitor_status_routes = monitor_gate(to_owner(monitor_status::add_monitor_status_routes(
+        Router::new(),
+    )));
     // Permission CRUD is administrative: a Groups:Edit / Monitors:Edit user
     // would otherwise be able to grant themselves or others elevated row-level
     // access via this endpoint. Require System (admin-tier) instead.
@@ -635,7 +636,7 @@ pub fn create_router_app(state: AppState) -> Router {
     // feature-level RBAC check runs first and the guard's DB query is only
     // reached after the caller has at least `Stream:View`.
     let live_routes = protect(
-        to_owner(live::add_live_routes(Router::new())).route_layer(
+        to_owner(live::add_live_routes(Router::new(), state.clone())).route_layer(
             axum::middleware::from_fn_with_state(
                 state.clone(),
                 crate::service::monitor_acl::monitor_stream_guard,

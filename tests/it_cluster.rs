@@ -304,7 +304,7 @@ async fn the_owners_error_status_passes_through() {
 
 #[tokio::test]
 #[ignore = "requires the test database (APP_PROFILE=test-db)"]
-async fn a_websocket_for_another_servers_monitor_is_refused_with_its_address() {
+async fn an_upgrade_that_is_not_a_websocket_handshake_is_refused() {
     let peer = peer(StatusCode::OK).await;
     let app = server_one(Some(&peer.url)).await;
     let monitor = monitor_on(&app.db, "ClusterWs", THERE).await;
@@ -327,7 +327,8 @@ async fn a_websocket_for_another_servers_monitor_is_refused_with_its_address() {
         StatusCode::MISDIRECTED_REQUEST,
         "MISDIRECTED_REQUEST_ERROR",
     );
-    assert!(r.text().contains(&peer.url), "{}", r.text());
+    // The relay carries WebSockets (see it_cluster_streams); a request that
+    // only claims to upgrade has no handshake to relay.
     assert!(peer.seen().is_empty());
 }
 

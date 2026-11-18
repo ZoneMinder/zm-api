@@ -36,7 +36,11 @@ pub async fn list_monitor_statuses(
     get,
     path = "/api/v3/monitor-status/{monitor_id}",
     params(("monitor_id" = u32, Path, description = "Monitor ID")),
-    responses((status = 200, description = "Monitor status detail", body = MonitorStatusResponse)),
+    responses(
+        (status = 200, description = "Monitor status detail. For a monitor another server runs, the request is relayed to that server, which reads its shared memory", body = MonitorStatusResponse),
+        (status = 421, description = "The server that runs the monitor has no address", body = crate::error::AppResponseError),
+        (status = 502, description = "The server that runs the monitor did not answer", body = crate::error::AppResponseError)
+    ),
     tag = "Monitor Status",
     security(("jwt" = []))
 )]

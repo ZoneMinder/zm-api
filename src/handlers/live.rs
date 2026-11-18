@@ -322,8 +322,14 @@ pub async fn get_live_stats(
     path = "/api/v3/live/sessions",
     operation_id = "listLiveSessions",
     tag = "Live Streaming",
+    params(crate::dto::response::daemon::ServerTargetQuery),
     responses(
         (status = 200, description = "List of active live sessions", body = Vec<u32>),
+        (status = 207, description = "With `server_id=all`: one entry per server; the status is 207 even when every server failed", body = crate::dto::response::daemon::AllServersResponse),
+        (status = 400, description = "`server_id` is neither a server number nor `all`", body = AppResponseError),
+        (status = 404, description = "No server has the number given in `server_id`", body = AppResponseError),
+        (status = 421, description = "The server named by `server_id` has no address", body = AppResponseError),
+        (status = 502, description = "The server named by `server_id` did not answer", body = AppResponseError),
         (status = 503, description = "Service unavailable", body = AppResponseError)
     ),
     security(
@@ -1646,8 +1652,14 @@ fn status_changes(
     path = "/api/v3/live/sources",
     operation_id = "getLiveSources",
     tag = "Live Streaming",
+    params(crate::dto::response::daemon::ServerTargetQuery),
     responses(
-        (status = 200, description = "Source statistics"),
+        (status = 200, description = "Source statistics: `active_sources` and `sources`", body = serde_json::Value),
+        (status = 207, description = "With `server_id=all`: one entry per server; the status is 207 even when every server failed", body = crate::dto::response::daemon::AllServersResponse),
+        (status = 400, description = "`server_id` is neither a server number nor `all`", body = AppResponseError),
+        (status = 404, description = "No server has the number given in `server_id`", body = AppResponseError),
+        (status = 421, description = "The server named by `server_id` has no address", body = AppResponseError),
+        (status = 502, description = "The server named by `server_id` did not answer", body = AppResponseError),
         (status = 503, description = "Service unavailable", body = AppResponseError)
     ),
     security(

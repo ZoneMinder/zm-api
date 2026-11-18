@@ -162,8 +162,8 @@ fn path_event_id(params: &RawPathParams) -> Option<u64> {
 }
 
 /// The steps both relays share once the owner is known: refuse a request
-/// another server already relayed, one for a server with no address, and a
-/// WebSocket; send anything else on. `what` finishes with "belongs to" or
+/// another server already relayed and one for a server with no address; send
+/// a WebSocket upgrade to [`super::websocket`] and anything else on. `what` finishes with "belongs to" or
 /// "are on", and reads as the start of every refusal.
 pub(crate) async fn relay_to_server(
     state: &AppState,
@@ -187,11 +187,7 @@ pub(crate) async fn relay_to_server(
         )));
     };
     if request.headers().contains_key(header::UPGRADE) {
-        return Err(AppError::MisdirectedError(format!(
-            "{what} {}; a WebSocket is not relayed, so connect to {} or use WHEP",
-            peer.label(),
-            peer.base_url
-        )));
+        return super::websocket::relay(state, &peer, what, path_and_query, request).await;
     }
     debug!(
         "relaying request ({what} {}) to {}",
@@ -249,7 +245,7 @@ async fn caller_sees(state: &AppState, sight: Sight, monitor_id: u32) -> AppResu
 
 /// The headers the owning server gets: the caller's own, minus the ones
 /// that belong to this connection, plus who relayed it and for whom.
-fn relayed_headers(
+pub(super) fn relayed_headers(
     from_caller: &HeaderMap,
     client: Option<std::net::IpAddr>,
     this_server: Option<u32>,

@@ -100,7 +100,7 @@ test-context = "0.5"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io", "compat"] }
-tokio-tungstenite = "0.30"
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 tracing = { version = "0.1", features = ["attributes"] }
 tracing-appender = "0.2"
 tracing-bunyan-formatter = "0.3"

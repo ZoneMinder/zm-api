@@ -21,7 +21,7 @@ use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, Notify};
 use tracing::{debug, warn};
 use utoipa::ToSchema;
@@ -82,7 +82,7 @@ impl From<&events::Model> for EventInfo {
 }
 
 /// A monitor's alarm state.
-#[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub struct AlarmInfo {
     pub monitor_id: u32,
     /// `idle`, `prealarm`, `alarm`, `alert`, or `unknown` (zmc not running).
@@ -310,21 +310,43 @@ impl EventTracker {
     }
 }
 
+/// The monitors whose shared memory this server holds. On a multi-server
+/// install that is the ones whose `ServerId` is this server's: reading the
+/// others' would report them `unknown` forever, and their real state comes
+/// from the server that runs them (see `crate::cluster::events`).
 async fn local_monitors(state: &AppState) -> Vec<u32> {
+    use crate::entity::monitors::Column;
     match crate::entity::monitors::Entity::find()
         .select_only()
-        .column(crate::entity::monitors::Column::Id)
-        .filter(crate::entity::monitors::Column::Deleted.eq(0))
-        .into_tuple::<u32>()
+        .column(Column::Id)
+        .column(Column::ServerId)
+        .filter(Column::Deleted.eq(0))
+        .into_tuple::<(u32, Option<u32>)>()
         .all(state.db())
         .await
     {
-        Ok(ids) => ids,
+        Ok(rows) => owned_here(state.cluster.relays(), state.cluster.this_server(), rows),
         Err(e) => {
             warn!("event stream: listing monitors: {e}");
             Vec::new()
         }
     }
+}
+
+/// The ids of the monitors, as `(id, ServerId)`, that this server runs.
+/// Every monitor when the install does not relay.
+fn owned_here(
+    relays: bool,
+    this_server: Option<u32>,
+    monitors: Vec<(u32, Option<u32>)>,
+) -> Vec<u32> {
+    monitors
+        .into_iter()
+        .filter(|(_, server)| {
+            !relays || crate::cluster::owner(this_server, *server) == crate::cluster::Owner::Here
+        })
+        .map(|(id, _)| id)
+        .collect()
 }
 
 async fn poll_events(state: &AppState, events: &mut EventTracker, hub: &EventHub) {
@@ -536,6 +558,15 @@ mod tests {
             latitude: None,
             longitude: None,
         }
+    }
+
+    #[test]
+    fn only_this_servers_monitors_are_read_from_shared_memory() {
+        let rows = vec![(1, Some(1)), (2, Some(2)), (3, None), (4, Some(0))];
+        assert_eq!(owned_here(true, Some(1), rows.clone()), [1, 3, 4]);
+        // Without relaying (or without a server id) every monitor is read, as before.
+        assert_eq!(owned_here(false, Some(1), rows.clone()), [1, 2, 3, 4]);
+        assert_eq!(owned_here(true, None, rows), [1, 2, 3, 4]);
     }
 
     #[test]

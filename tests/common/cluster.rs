@@ -150,3 +150,183 @@ pub async fn server_row(db: &DatabaseConnection, id: u32, name: &str) -> RowGuar
     .expect("insert server row");
     RowGuard::server(id)
 }
+
+// ---- Streams: a WebSocket peer, an event-stream peer, a real listener ------
+
+use axum::extract::ws::{CloseFrame, Message, WebSocketUpgrade};
+use axum::extract::FromRequestParts;
+use axum::response::sse::{Event, Sse};
+use futures_util::{stream, StreamExt};
+
+#[derive(Clone)]
+struct WsStub {
+    seen: Arc<Mutex<Vec<Seen>>>,
+    log: Arc<Mutex<Vec<String>>>,
+}
+
+/// Server 2 as a WebSocket peer. It selects the subprotocol `zm.v1` when the
+/// client offers it, and answers text `t` with `peer:t`, a binary message
+/// with its bytes reversed, and the text `close-me` with a close frame
+/// (4002, "from peer").
+pub struct WsPeer {
+    pub url: String,
+    seen: Arc<Mutex<Vec<Seen>>>,
+    log: Arc<Mutex<Vec<String>>>,
+}
+
+impl WsPeer {
+    pub fn seen(&self) -> Vec<Seen> {
+        self.seen.lock().unwrap().clone()
+    }
+
+    /// What the peer observed on its socket, in order: `close:<code>:<reason>`
+    /// for a close frame, `gone` for a socket that ended without one.
+    pub fn log(&self) -> Vec<String> {
+        self.log.lock().unwrap().clone()
+    }
+}
+
+async fn ws_record(State(stub): State<WsStub>, request: Request) -> Response {
+    let (mut parts, _) = request.into_parts();
+    stub.seen.lock().unwrap().push(Seen {
+        method: parts.method.clone(),
+        path_and_query: parts
+            .uri
+            .path_and_query()
+            .map(|pq| pq.as_str().to_string())
+            .unwrap_or_default(),
+        headers: parts.headers.clone(),
+        body: Bytes::new(),
+    });
+    let Ok(ws) = WebSocketUpgrade::from_request_parts(&mut parts, &()).await else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let log = stub.log.clone();
+    ws.protocols(["zm.v1"])
+        .on_upgrade(move |mut socket| async move {
+            while let Some(message) = socket.next().await {
+                let reply = match message {
+                    Ok(Message::Text(text)) if text.as_str() == "close-me" => {
+                        let _ = socket
+                            .send(Message::Close(Some(CloseFrame {
+                                code: 4002,
+                                reason: "from peer".into(),
+                            })))
+                            .await;
+                        return;
+                    }
+                    Ok(Message::Text(text)) => Message::text(format!("peer:{}", text.as_str())),
+                    Ok(Message::Binary(bytes)) => {
+                        Message::Binary(bytes.iter().rev().copied().collect::<Vec<u8>>().into())
+                    }
+                    Ok(Message::Close(frame)) => {
+                        let (code, reason) = frame
+                            .map(|f| (f.code, f.reason.as_str().to_string()))
+                            .unwrap_or((1005, String::new()));
+                        log.lock().unwrap().push(format!("close:{code}:{reason}"));
+                        return;
+                    }
+                    Ok(_) => continue,
+                    Err(_) => break,
+                };
+                if socket.send(reply).await.is_err() {
+                    break;
+                }
+            }
+            log.lock().unwrap().push("gone".to_string());
+        })
+}
+
+pub async fn ws_peer() -> WsPeer {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let router = Router::new().fallback(ws_record).with_state(WsStub {
+        seen: seen.clone(),
+        log: log.clone(),
+    });
+    WsPeer {
+        url: serve_router(router).await,
+        seen,
+        log,
+    }
+}
+
+#[derive(Clone)]
+struct SseStub {
+    events: Arc<Vec<(String, serde_json::Value)>>,
+    seen: Arc<Mutex<Vec<Seen>>>,
+}
+
+/// Server 2 as an event-stream peer: sends `events` to each subscriber, then
+/// holds the stream open.
+pub struct SsePeer {
+    pub url: String,
+    seen: Arc<Mutex<Vec<Seen>>>,
+}
+
+impl SsePeer {
+    pub fn seen(&self) -> Vec<Seen> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+async fn sse_record(State(stub): State<SseStub>, request: Request) -> Response {
+    let (parts, _) = request.into_parts();
+    stub.seen.lock().unwrap().push(Seen {
+        method: parts.method,
+        path_and_query: parts
+            .uri
+            .path_and_query()
+            .map(|pq| pq.as_str().to_string())
+            .unwrap_or_default(),
+        headers: parts.headers,
+        body: Bytes::new(),
+    });
+    let sent: Vec<Result<Event, std::convert::Infallible>> = stub
+        .events
+        .iter()
+        .map(|(name, data)| Ok(Event::default().event(name).data(data.to_string())))
+        .collect();
+    Sse::new(stream::iter(sent).chain(stream::pending())).into_response()
+}
+
+pub async fn sse_peer(events: Vec<(&str, serde_json::Value)>) -> SsePeer {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let events = events
+        .into_iter()
+        .map(|(name, data)| (name.to_string(), data))
+        .collect();
+    let router = Router::new().fallback(sse_record).with_state(SseStub {
+        events: Arc::new(events),
+        seen: seen.clone(),
+    });
+    SsePeer {
+        url: serve_router(router).await,
+        seen,
+    }
+}
+
+/// Serve `router` on a free port; its base URL.
+pub async fn serve_router(router: Router) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    url
+}
+
+/// Serve the app on a real socket, for clients that need one (WebSockets);
+/// its `host:port`.
+pub async fn serve_app(app: &TestApp) -> String {
+    serve_router(app.router())
+        .await
+        .trim_start_matches("http://")
+        .to_string()
+}
+
+/// A base URL where nothing listens, for a server that is down.
+pub async fn down_url() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    format!("http://{}", listener.local_addr().unwrap())
+}

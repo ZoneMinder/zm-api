@@ -52,18 +52,32 @@ pub fn routes() -> Router<AppState> {
 }
 
 /// Add live streaming routes to the router
-pub fn add_live_routes(router: Router<AppState>) -> Router<AppState> {
+pub fn add_live_routes(router: Router<AppState>, state: AppState) -> Router<AppState> {
     router
         // Per-monitor live streaming endpoints
         .nest("/api/v3/live/{monitor_id}", routes())
         // Global live streaming endpoints
         .route(
             "/api/v3/live/sessions",
-            get(live::list_live_sessions).route_layer(axum::middleware::from_fn(auth_middleware)),
+            get(live::list_live_sessions)
+                // `server_id=<n>|all`, as on the daemon routes. Inside the
+                // login check, so nothing leaves this server unauthenticated.
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::cluster::system::target_server,
+                ))
+                .route_layer(axum::middleware::from_fn(auth_middleware)),
         )
         .route(
             "/api/v3/live/sources",
-            get(live::get_live_sources).route_layer(axum::middleware::from_fn(auth_middleware)),
+            get(live::get_live_sources)
+                // `server_id=<n>|all`, as on the daemon routes. Inside the
+                // login check, so nothing leaves this server unauthenticated.
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::cluster::system::target_server,
+                ))
+                .route_layer(axum::middleware::from_fn(auth_middleware)),
         )
         // Monitor snapshot (supports token query param for <img> tags)
         // `POST` takes a fresh snapshot through a zm-next worker. Header auth
