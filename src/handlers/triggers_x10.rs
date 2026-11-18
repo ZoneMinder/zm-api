@@ -2,13 +2,14 @@ use crate::dto::request::triggers_x10::{CreateTriggerX10Request, UpdateTriggerX1
 use crate::dto::response::triggers_x10::PaginatedTriggersX10Response;
 use crate::dto::response::TriggerX10Response;
 use crate::dto::PaginationParams;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::server::state::AppState;
 use crate::service::monitor_acl::MonitorScope;
 use axum::{
     extract::{Path, Query, State},
     Json,
 };
+use garde::Validate;
 
 /// List all X10 triggers with pagination.
 ///
@@ -70,6 +71,7 @@ pub async fn create_trigger_x10(
     scope: MonitorScope,
     Json(req): Json<CreateTriggerX10Request>,
 ) -> AppResult<(axum::http::StatusCode, Json<TriggerX10Response>)> {
+    req.validate().map_err(AppError::InvalidInputError)?;
     let item = crate::service::triggers_x10::create(&state, req, &scope).await?;
     Ok((axum::http::StatusCode::CREATED, Json(item)))
 }
@@ -93,6 +95,7 @@ pub async fn update_trigger_x10(
     scope: MonitorScope,
     Json(req): Json<UpdateTriggerX10Request>,
 ) -> AppResult<Json<TriggerX10Response>> {
+    req.validate().map_err(AppError::InvalidInputError)?;
     let item = crate::service::triggers_x10::update(&state, monitor_id, req, &scope).await?;
     Ok(Json(item))
 }

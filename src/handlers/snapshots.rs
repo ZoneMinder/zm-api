@@ -13,11 +13,22 @@ use crate::dto::response::SnapshotResponse;
 use crate::dto::PaginationParams;
 use crate::error::{AppError, AppResult};
 use crate::server::state::AppState;
+use crate::service::snapshots::Caller;
+use crate::util::authz::{Feature, Level};
+use crate::util::claim::UserClaims;
+use axum::Extension;
 use axum::{
     extract::{Path, Query, State},
     Json,
 };
 use garde::Validate;
+
+fn caller(claims: &UserClaims) -> Caller {
+    Caller {
+        uid: claims.uid,
+        admin: claims.perms.level(Feature::System) >= Level::Edit,
+    }
+}
 
 /// List all snapshots with pagination.
 ///
@@ -73,10 +84,11 @@ pub async fn get_snapshot(
 )]
 pub async fn create_snapshot(
     State(state): State<AppState>,
+    Extension(claims): Extension<UserClaims>,
     Json(req): Json<CreateSnapshotRequest>,
 ) -> AppResult<(axum::http::StatusCode, Json<SnapshotResponse>)> {
     req.validate().map_err(AppError::InvalidInputError)?;
-    let item = crate::service::snapshots::create(&state, req).await?;
+    let item = crate::service::snapshots::create(&state, caller(&claims), req).await?;
     Ok((axum::http::StatusCode::CREATED, Json(item)))
 }
 
@@ -96,10 +108,11 @@ pub async fn create_snapshot(
 pub async fn update_snapshot(
     Path(id): Path<u32>,
     State(state): State<AppState>,
+    Extension(claims): Extension<UserClaims>,
     Json(req): Json<UpdateSnapshotRequest>,
 ) -> AppResult<Json<SnapshotResponse>> {
     req.validate().map_err(AppError::InvalidInputError)?;
-    let item = crate::service::snapshots::update(&state, id, req).await?;
+    let item = crate::service::snapshots::update(&state, caller(&claims), id, req).await?;
     Ok(Json(item))
 }
 
