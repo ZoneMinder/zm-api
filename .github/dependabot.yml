@@ -1,0 +1,11 @@
+# Workflows pin every action to a commit. Dependabot keeps those pins current,
+# and updates the version comment beside each one.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

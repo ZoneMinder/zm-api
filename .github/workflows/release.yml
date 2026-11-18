@@ -25,7 +25,7 @@ jobs:
     name: Version consistency
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - run: ./scripts/check-version-consistency.sh
 
   # Debian/Ubuntu/Raspberry Pi OS — the flagship, built natively per arch.
@@ -39,7 +39,7 @@ jobs:
           - { arch: arm64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install FFmpeg/OpenSSL dev libraries
         run: |
@@ -49,7 +49,7 @@ jobs:
             libavutil-dev libavformat-dev libavfilter-dev \
             libavdevice-dev libavcodec-dev libswscale-dev libswresample-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
       # Build caches hold objects compiled against this runner's FFmpeg. When
       # GitHub moves ubuntu-latest to a new release, an old cache links against
@@ -57,7 +57,7 @@ jobs:
       - name: Key the build cache to this FFmpeg
         run: echo "FFMPEG_KEY=$(. /etc/os-release; echo "$ID-$VERSION_ID")-avcodec-$(pkg-config --modversion libavcodec)" >> "$GITHUB_ENV"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ env.FFMPEG_KEY }}
 
@@ -84,7 +84,7 @@ jobs:
           fi
           dpkg-deb -c "$deb"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: deb-${{ matrix.arch }}
           path: target/debian/*.deb
@@ -123,7 +123,7 @@ jobs:
             'pkgconfig(libavdevice)' 'pkgconfig(libswscale)' \
             'pkgconfig(libswresample)'
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Mark workspace as a safe git directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -137,7 +137,7 @@ jobs:
           find "$(rpm --eval %_topdir)/RPMS" -name '*.rpm' -exec cp {} out/ \;
           ls -l out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rpm-${{ matrix.distro }}
           path: out/*.rpm
@@ -153,7 +153,7 @@ jobs:
       - name: Install build dependencies
         run: pacman -Syu --noconfirm base-devel git rust ffmpeg openssl clang
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Build package
         run: |
@@ -177,7 +177,7 @@ jobs:
           mkdir -p out && cp /tmp/build/*.pkg.tar.zst out/
           ls -l out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: arch-pkg
           path: out/*.pkg.tar.zst
@@ -192,7 +192,7 @@ jobs:
     name: OpenAPI spec
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install FFmpeg/OpenSSL dev libraries
         run: |
@@ -202,7 +202,7 @@ jobs:
             libavutil-dev libavformat-dev libavfilter-dev \
             libavdevice-dev libavcodec-dev libswscale-dev libswresample-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
       # Build caches hold objects compiled against this runner's FFmpeg. When
       # GitHub moves ubuntu-latest to a new release, an old cache links against
@@ -210,7 +210,7 @@ jobs:
       - name: Key the build cache to this FFmpeg
         run: echo "FFMPEG_KEY=$(. /etc/os-release; echo "$ID-$VERSION_ID")-avcodec-$(pkg-config --modversion libavcodec)" >> "$GITHUB_ENV"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ env.FFMPEG_KEY }}
 
@@ -227,7 +227,7 @@ jobs:
           sys.exit(0 if paths > 50 else 'suspiciously few paths')
           "
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: openapi
           path: openapi.json
@@ -253,9 +253,9 @@ jobs:
           - { distro: arch, arch: amd64, runner: ubuntu-24.04, artifact: arch-pkg }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ${{ matrix.artifact }}
           path: pkg
@@ -265,7 +265,7 @@ jobs:
 
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: packaging-logs-${{ matrix.artifact }}
           path: target/e2e/${{ matrix.distro }}/logs
@@ -274,7 +274,7 @@ jobs:
       - name: Mark the package verified
         run: echo "${{ matrix.artifact }} passed its install test at ${{ github.sha }}" > verified.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: verified-${{ matrix.artifact }}
           path: verified.txt
@@ -288,7 +288,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # One directory per artifact, so a package can be matched to its marker.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: downloaded
 
@@ -327,7 +327,7 @@ jobs:
       # The hand-written entry for this version, if CHANGELOG.md has one. Falls
       # back to GitHub's generated commit list, which is better than nothing but
       # says little to someone deciding whether to upgrade.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with: { path: src }
 
       - name: Extract release notes
