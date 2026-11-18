@@ -63,6 +63,22 @@ pub struct AppState {
     pub server_id: Option<u32>,
 }
 
+/// How long a request to another service (the search models, telemetry) may
+/// take before it is given up on.
+const OUTBOUND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The client for requests to other services. reqwest has no timeout unless
+/// given one, so a model server that accepted a connection and then hung
+/// would hold every search that reached it open for ever, each with its task
+/// and connection.
+fn outbound_client(timeout: std::time::Duration) -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(timeout.min(std::time::Duration::from_secs(10)))
+        .timeout(timeout)
+        .build()
+}
+
 impl AppState {
     pub async fn new(mut config: AppConfig) -> AppResult<Self> {
         crate::configure::server::set_public_prefix(&config.server.public_prefix)
@@ -110,10 +126,7 @@ impl AppState {
         )
         .await;
 
-        let http = reqwest::Client::builder()
-            .no_proxy()
-            .build()
-            .expect("http client");
+        let http = outbound_client(OUTBOUND_TIMEOUT).expect("http client");
 
         // Natural-language / semantic event search. Resolves its vector backend
         // (probing the DB only when enabled) and creates its schema; off by
@@ -415,6 +428,21 @@ impl AppState {
             }
         };
 
+        // Its own client, which doesn't follow redirects: the transport checks
+        // the address it is given, and a redirect would take the request (and
+        // the camera's credentials) to one it didn't check.
+        let onvif_http = match reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("ONVIF event listeners: http client: {e}");
+                return;
+            }
+        };
+
         let mut spawned = 0usize;
         for m in monitors {
             // A deleted monitor must not get a listener inserting events (#120).
@@ -429,7 +457,7 @@ impl AppState {
                     m.onvif_password.clone(),
                 )
             });
-            let transport = crate::onvif::transport::OnvifTransport::new(self.http.clone());
+            let transport = crate::onvif::transport::OnvifTransport::new(onvif_http.clone());
             let client = crate::onvif::events::EventsClient::new(transport, events_xaddr, creds);
             let alarm_cause = m
                 .onvif_alarm_text
@@ -564,5 +592,35 @@ pub fn live_services(
         source_router,
         live_coordinator,
         snapshot_service,
+    }
+}
+
+#[cfg(test)]
+mod outbound_tests {
+    use super::*;
+
+    /// A service that takes the connection and never answers must not hold
+    /// the caller for ever.
+    #[tokio::test]
+    async fn a_service_that_never_answers_is_given_up_on() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // Accept and hold the connection open, saying nothing.
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((conn, _)) = listener.accept().await {
+                held.push(conn);
+            }
+        });
+
+        let client = outbound_client(std::time::Duration::from_millis(200)).unwrap();
+        let started = std::time::Instant::now();
+        let err = client
+            .get(format!("http://{addr}/embed"))
+            .send()
+            .await
+            .expect_err("no answer ever comes");
+        assert!(err.is_timeout(), "{err}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 }

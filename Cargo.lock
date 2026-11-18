@@ -7938,6 +7938,7 @@ dependencies = [
  "futures-util",
  "garde",
  "hmac 0.13.0",
+ "hyper-util",
  "iana-time-zone",
  "image",
  "insta",

@@ -86,6 +86,12 @@ impl ProbeMatch {
     }
 }
 
+/// The most devices one probe returns. Replies are unauthenticated UDP, so
+/// any host on the network can answer, as often and with as many devices as
+/// it likes. Without a limit a flood of made-up devices grows the result,
+/// and the cost of de-duplicating it, for the whole collection window.
+const MAX_MATCHES: usize = 256;
+
 /// WS-Discovery probe client.
 ///
 /// Stateless apart from configuration; one client can issue many probes.
@@ -209,6 +215,9 @@ impl DiscoveryClient {
                         .any(|e| e.endpoint_reference == m.endpoint_reference);
                 if !dup {
                     found.push(m);
+                }
+                if found.len() >= MAX_MATCHES {
+                    return Ok(found);
                 }
             }
         }
@@ -624,6 +633,35 @@ mod tests {
         // Total garbage.
         let _ = parse_probe_matches("<<<not xml>>>");
         let _ = parse_probe_matches("");
+    }
+
+    /// A host that answers a probe with a flood of made-up devices gets a
+    /// bounded list back, and the probe ends early.
+    #[tokio::test]
+    async fn a_flood_of_replies_stops_at_the_limit() {
+        let camera = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let client = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let client_addr = client.local_addr().unwrap();
+
+        let flood = tokio::spawn(async move {
+            for n in 0..(MAX_MATCHES + 100) {
+                let reply = NORMAL.replace(
+                    "urn:uuid:abcdef01-1234-5678-9abc-def012345678",
+                    &format!("urn:uuid:flood-{n}"),
+                );
+                camera.send_to(reply.as_bytes(), client_addr).await.unwrap();
+                if n % 32 == 0 {
+                    tokio::task::yield_now().await;
+                }
+            }
+        });
+
+        let dc = DiscoveryClient::new(Duration::from_secs(20));
+        let started = Instant::now();
+        let found = dc.collect(&client).await.unwrap();
+        flood.abort();
+        assert_eq!(found.len(), MAX_MATCHES);
+        assert!(started.elapsed() < Duration::from_secs(15));
     }
 
     /// End-to-end socket smoke test: bind a local responder, point a client at

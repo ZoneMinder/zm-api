@@ -33,6 +33,11 @@ pub enum OnvifError {
     /// WS-Discovery failure (socket bind, multicast send/receive).
     #[error("discovery error: {0}")]
     Discovery(String),
+
+    /// The service address reaches this server or a cloud metadata service,
+    /// so no request was sent.
+    #[error("refused: {0}")]
+    Refused(String),
 }
 
 /// Convenience result alias for ONVIF operations.

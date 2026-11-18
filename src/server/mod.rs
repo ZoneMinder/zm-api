@@ -45,6 +45,33 @@ async fn shutdown_signal() {
     tracing::info!("Shutdown signal received; draining in-flight requests.");
 }
 
+/// How long a client has to send a request's headers.
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// `server`, closing any connection that has not sent a full request head in
+/// [`HEADER_READ_TIMEOUT`].
+///
+/// hyper only enforces that limit when given a timer, and neither
+/// `axum::serve` nor `axum_server` gives it one. Without it a connection that
+/// sends its headers a byte at a time, or never, is held open for ever, and
+/// enough of them use up the process's file descriptors: nobody else can
+/// connect, and no login is needed to do it (Slowloris).
+fn bounded<A>(server: axum_server::Server<SocketAddr, A>) -> axum_server::Server<SocketAddr, A> {
+    bounded_by(server, HEADER_READ_TIMEOUT)
+}
+
+fn bounded_by<A>(
+    mut server: axum_server::Server<SocketAddr, A>,
+    header_read_timeout: Duration,
+) -> axum_server::Server<SocketAddr, A> {
+    server
+        .http_builder()
+        .http1()
+        .timer(hyper_util::rt::TokioTimer::new())
+        .header_read_timeout(header_read_timeout);
+    server
+}
+
 /// Spawn a task that triggers `axum_server` graceful shutdown on a signal,
 /// bounding the drain with `timeout`.
 fn spawn_graceful_shutdown(handle: axum_server::Handle<SocketAddr>, timeout: Duration) {
@@ -254,16 +281,16 @@ impl AppServer {
                         "/.well-known/acme-challenge/{challenge_token}",
                         challenge_service,
                     );
-                    let http_server = axum_server::bind(http_addr)
+                    let http_server = bounded(axum_server::bind(http_addr))
                         .handle(handle.clone())
                         .serve(http_router.into_make_service());
-                    let https_server = axum_server::bind(addr)
+                    let https_server = bounded(axum_server::bind(addr))
                         .handle(handle)
                         .acceptor(acceptor)
                         .serve(router.into_make_service_with_connect_info::<SocketAddr>());
                     tokio::try_join!(https_server, http_server)?;
                 } else {
-                    axum_server::bind(addr)
+                    bounded(axum_server::bind(addr))
                         .handle(handle)
                         .acceptor(acceptor)
                         .serve(router.into_make_service_with_connect_info::<SocketAddr>())
@@ -284,30 +311,29 @@ impl AppServer {
                 let tls = tls_from_pem_files(cert_path, key_path).await?;
                 let handle = axum_server::Handle::new();
                 spawn_graceful_shutdown(handle.clone(), shutdown_timeout);
-                axum_server::bind_rustls(addr, tls)
+                bounded(axum_server::bind_rustls(addr, tls))
                     .handle(handle)
                     .serve(router.into_make_service_with_connect_info::<SocketAddr>())
                     .await?;
             } else {
                 tracing::info!("Starting HTTP server on: {addr}");
-                let tcp = tokio::net::TcpListener::bind(addr).await?;
-                // Bounded like the TLS paths: an unbounded drain let one slow
-                // response hold the exit past TimeoutStopSec (#116).
-                let deadline = async {
-                    signalled().await;
-                    tokio::time::sleep(shutdown_timeout).await;
-                };
-                tokio::select! {
-                    served = axum::serve(
-                        tcp,
-                        router.into_make_service_with_connect_info::<SocketAddr>(),
-                    )
-                    .with_graceful_shutdown(signalled()) => served?,
-                    _ = deadline => tracing::warn!(
-                        "HTTP drain exceeded {:?}; exiting with requests in flight",
-                        shutdown_timeout
-                    ),
-                }
+                // axum_server here too, not `axum::serve`: only it lets the
+                // header timeout below be set. The drain is bounded like the
+                // TLS paths: an unbounded one let a slow response hold the
+                // exit past TimeoutStopSec (#116).
+                let handle = axum_server::Handle::new();
+                tokio::spawn({
+                    let handle = handle.clone();
+                    let signal = signalled();
+                    async move {
+                        signal.await;
+                        handle.graceful_shutdown(Some(shutdown_timeout));
+                    }
+                });
+                bounded(axum_server::bind(addr))
+                    .handle(handle)
+                    .serve(router.into_make_service_with_connect_info::<SocketAddr>())
+                    .await?;
             }
             Ok(())
         }
@@ -352,4 +378,78 @@ pub async fn tls_from_pem_files(
     key_path: impl AsRef<std::path::Path>,
 ) -> std::io::Result<axum_server::tls_rustls::RustlsConfig> {
     axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path).await
+}
+
+#[cfg(test)]
+mod header_timeout_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn serve(timeout: Option<Duration>) -> (SocketAddr, axum_server::Handle<SocketAddr>) {
+        let app = axum::Router::new().route("/", axum::routing::get(|| async { "ok" }));
+        let handle = axum_server::Handle::new();
+        let server = axum_server::bind(SocketAddr::from(([127, 0, 0, 1], 0)));
+        let server = match timeout {
+            Some(t) => bounded_by(server, t),
+            None => server,
+        };
+        tokio::spawn(
+            server
+                .handle(handle.clone())
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>()),
+        );
+        let addr = handle.listening().await.expect("server is listening");
+        (addr, handle)
+    }
+
+    /// Whether the server closes a connection that sends half a request head
+    /// and then nothing, within two seconds.
+    async fn closes_a_stalled_request(addr: SocketAddr) -> bool {
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n")
+            .await
+            .unwrap();
+        let mut buf = [0u8; 256];
+        // Closed: the read ends (EOF, or a 408 and then EOF). Held: it hangs.
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match conn.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => continue,
+                }
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    #[tokio::test]
+    async fn a_request_that_never_finishes_its_headers_is_dropped() {
+        let (addr, handle) = serve(Some(Duration::from_millis(200))).await;
+        assert!(closes_a_stalled_request(addr).await);
+        handle.shutdown();
+    }
+
+    /// The control: without the timer the same connection is held, which is
+    /// what the servers did before.
+    #[tokio::test]
+    async fn without_the_timeout_the_connection_is_held() {
+        let (addr, handle) = serve(None).await;
+        assert!(!closes_a_stalled_request(addr).await);
+        handle.shutdown();
+    }
+
+    #[tokio::test]
+    async fn a_whole_request_is_still_answered() {
+        let (addr, handle) = serve(Some(Duration::from_millis(200))).await;
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        conn.write_all(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut reply = String::new();
+        conn.read_to_string(&mut reply).await.unwrap();
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(reply.ends_with("ok"), "{reply}");
+        handle.shutdown();
+    }
 }

@@ -45,6 +45,8 @@ impl OnvifTransport {
         // action from the wsa:Action header rather than the Content-Type param.
         // Emitted for every call (harmless for Device/Media/PTZ, mandatory for
         // Events). MessageID is a fresh urn:uuid per request.
+        let pinned = ensure_target_allowed(service_url).await?;
+        let client = pinned.as_ref().unwrap_or(&self.client);
         let message_id = format!("urn:uuid:{}", uuid::Uuid::new_v4());
         let wsa = wsa_headers(service_url, soap_action, &message_id);
         let security = match creds {
@@ -59,8 +61,7 @@ impl OnvifTransport {
         // SOAP 1.2 carries the action in the Content-Type parameter.
         let content_type = format!("application/soap+xml; charset=utf-8; action=\"{soap_action}\"");
 
-        let resp = self
-            .client
+        let resp = client
             .post(service_url)
             .header(reqwest::header::CONTENT_TYPE, content_type)
             .timeout(timeout)
@@ -76,13 +77,7 @@ impl OnvifTransport {
             })?;
 
         let status = resp.status();
-        let text = resp.text().await.map_err(|e| {
-            if e.is_timeout() {
-                OnvifError::Timeout
-            } else {
-                OnvifError::Http(e)
-            }
-        })?;
+        let text = read_capped(resp).await?;
 
         // A SOAP Fault may arrive with a non-2xx status (commonly 400/500) or,
         // for some devices, a 200. Parse the body either way before deciding.
@@ -108,6 +103,62 @@ impl OnvifTransport {
 
         Ok(text)
     }
+}
+
+/// Refuse a service address that reaches this server or a cloud metadata
+/// service. `service_url` is a stored `ONVIF_URL` (anyone with Monitors Edit
+/// sets it) or an address a device returned, and the request carries the
+/// camera's credentials.
+/// Refuse a target that is this server or a metadata service. For a host
+/// name, returns a client that connects only to the addresses the check saw:
+/// the shared client would look the name up again, and a name that answers
+/// with a camera's address first and `127.0.0.1` second (DNS rebinding) would
+/// get past the check.
+async fn ensure_target_allowed(service_url: &str) -> OnvifResult<Option<reqwest::Client>> {
+    use crate::util::net_guard::{check_and_resolve, own_addresses, Checked};
+    match check_and_resolve(service_url, &own_addresses()).await {
+        Err(ip) => Err(OnvifError::Refused(format!(
+            "{service_url} reaches {ip}, which is this server or a cloud metadata address"
+        ))),
+        Ok(Checked::Literal) => Ok(None),
+        Ok(Checked::Name(name, addrs)) if addrs.is_empty() => {
+            Err(OnvifError::Refused(format!("{name} does not resolve")))
+        }
+        Ok(Checked::Name(name, addrs)) => reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve_to_addrs(&name, &addrs)
+            .build()
+            .map(Some)
+            .map_err(OnvifError::Http),
+    }
+}
+
+/// The most a device's response may hold. ONVIF replies are a few kilobytes;
+/// the largest (GetProfiles, a full PullMessages batch) stay well under this.
+const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+
+/// The response body as text, refused once it passes [`MAX_RESPONSE_BYTES`]
+/// so a device can't make the server buffer an endless reply.
+async fn read_capped(mut resp: reqwest::Response) -> OnvifResult<String> {
+    let mut body = Vec::new();
+    loop {
+        let chunk = resp.chunk().await.map_err(|e| {
+            if e.is_timeout() {
+                OnvifError::Timeout
+            } else {
+                OnvifError::Http(e)
+            }
+        })?;
+        let Some(chunk) = chunk else { break };
+        if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            return Err(OnvifError::Parse(format!(
+                "response is larger than {MAX_RESPONSE_BYTES} bytes"
+            )));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
 }
 
 /// SOAP 1.2 envelope namespace.
@@ -309,6 +360,45 @@ fn truncate(s: &str, max: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The address may be a stored `ONVIF_URL` or one a device handed back
+    /// (a subscription reference, a media XAddr), so the transport itself
+    /// refuses this server and cloud metadata. The listener would accept a
+    /// connection if the request were sent.
+    #[tokio::test]
+    async fn refuses_this_server_and_metadata_before_connecting() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let transport = OnvifTransport::new(reqwest::Client::new());
+        for url in [
+            format!("http://127.0.0.1:{port}/onvif/event_service"),
+            format!("http://localhost:{port}/onvif/event_service"),
+            format!("http://[::ffff:127.0.0.1]:{port}/Subscription?Idx=1"),
+            "http://169.254.169.254/latest/meta-data/".to_string(),
+        ] {
+            let err = transport
+                .call(&url, "urn:x", "<x/>", None, Duration::from_secs(2))
+                .await
+                .unwrap_err();
+            assert!(matches!(err, OnvifError::Refused(_)), "{url}: {err:?}");
+        }
+        let accepted = tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;
+        assert!(accepted.is_err(), "a request reached the listener");
+    }
+
+    fn response_of(len: usize) -> reqwest::Response {
+        reqwest::Response::from(axum::http::Response::new(vec![b'a'; len]))
+    }
+
+    #[tokio::test]
+    async fn a_response_past_the_size_cap_is_an_error() {
+        let ok = read_capped(response_of(MAX_RESPONSE_BYTES)).await.unwrap();
+        assert_eq!(ok.len(), MAX_RESPONSE_BYTES);
+        let err = read_capped(response_of(MAX_RESPONSE_BYTES + 1))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, OnvifError::Parse(_)), "{err:?}");
+    }
 
     #[test]
     fn envelope_without_header_omits_header_element() {

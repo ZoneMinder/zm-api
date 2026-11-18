@@ -20,6 +20,17 @@ use crate::service::monitor_acl::MonitorScope;
 /// (`frames.json`), `images`, `video` and `misc` (the event directory's other
 /// files). Every id is checked first: one that doesn't exist or isn't
 /// visible to the caller is a 404 and nothing is sent.
+/// The most exports written at once. One reads up to 500 events' recordings
+/// off the disks the cameras are recording to, and it takes only View access
+/// to start one, so without a limit a viewer could start enough to stall
+/// recording.
+const MAX_CONCURRENT_EXPORTS: usize = 4;
+
+static EXPORT_SLOTS: once_cell::sync::Lazy<std::sync::Arc<tokio::sync::Semaphore>> =
+    once_cell::sync::Lazy::new(|| {
+        std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_EXPORTS))
+    });
+
 #[utoipa::path(
     post,
     path = "/api/v3/events/export",
@@ -39,9 +50,19 @@ pub async fn export_events(
     Json(req): Json<EventExportRequest>,
 ) -> AppResult<Response> {
     req.validate().map_err(AppError::InvalidInputError)?;
+    // Taken before any work, held until the archive is written.
+    let slot = EXPORT_SLOTS.clone().try_acquire_owned().map_err(|_| {
+        AppError::ServiceUnavailableError(format!(
+            "{MAX_CONCURRENT_EXPORTS} exports are already running; try again when one finishes"
+        ))
+    })?;
     let exports = svc::prepare(&state, &scope, &req.ids).await?;
     let (writer, reader) = tokio::io::duplex(64 * 1024);
-    tokio::spawn(svc::write(state.clone(), exports, req.parts(), writer));
+    let (state_for_write, parts) = (state.clone(), req.parts());
+    tokio::spawn(async move {
+        let _slot = slot;
+        svc::write(state_for_write, exports, parts, writer).await;
+    });
 
     let name = format!(
         "attachment; filename=\"zm-events-{}.zip\"",

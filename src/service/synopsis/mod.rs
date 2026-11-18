@@ -70,6 +70,45 @@ pub struct SynopsisStatusView {
     pub expires_at: Option<chrono::NaiveDateTime>,
 }
 
+/// How many stills are composited at once: one per core, at least two. The
+/// mp4 renders have `max_concurrent_renders`; stills had no limit, and each
+/// request for one not yet cached composites it on a blocking thread, so a
+/// viewer paging through events could occupy every core. Past the limit a
+/// request waits its turn.
+fn still_limit() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2)
+        .max(2)
+}
+
+static STILL_SLOTS: std::sync::OnceLock<Semaphore> = std::sync::OnceLock::new();
+
+async fn still_slot() -> tokio::sync::SemaphorePermit<'static> {
+    STILL_SLOTS
+        .get_or_init(|| Semaphore::new(still_limit()))
+        .acquire()
+        .await
+        .expect("the still semaphore is never closed")
+}
+
+/// The most stills kept in memory. Each is a JPEG of a few hundred kilobytes
+/// and the cache is keyed by event, so without a limit a viewer paging through
+/// events would grow it until the server ran out of memory.
+const MAX_CACHED_STILLS: usize = 256;
+
+/// Cache `still`, dropping others first if the cache is full. Which ones go is
+/// arbitrary: a dropped still is rendered again when next asked for.
+fn remember_still(cache: &DashMap<u64, Arc<Vec<u8>>>, id: u64, still: Arc<Vec<u8>>) {
+    while cache.len() >= MAX_CACHED_STILLS {
+        let Some(victim) = cache.iter().next().map(|e| *e.key()) else {
+            break;
+        };
+        cache.remove(&victim);
+    }
+    cache.insert(id, still);
+}
+
 /// Renders, caches and serves motion synopses. Mirrors `SnapshotService`: holds
 /// the db handle, config, and an in-memory cache of rendered artifacts.
 pub struct SynopsisService {
@@ -130,13 +169,14 @@ impl SynopsisService {
         let asset_dir = row.asset_dir.clone();
         let feather = self.config.mask_feather_px;
 
+        let _slot = still_slot().await;
         let bytes = tokio::task::spawn_blocking(move || {
             compositor::render_still(&manifest, Path::new(&asset_dir), feather)
         })
         .await??;
 
         let arc = Arc::new(bytes);
-        self.still_cache.insert(row.id, arc.clone());
+        remember_still(&self.still_cache, row.id, arc.clone());
         Ok(arc)
     }
 
@@ -319,6 +359,7 @@ impl SynopsisService {
         let max_tubes = self.config.max_tubes_per_frame.max(1).saturating_mul(8);
         let feather = self.config.mask_feather_px;
 
+        let _slot = still_slot().await;
         let bytes = tokio::task::spawn_blocking(move || {
             compositor::render_overview_still(&parsed, &class_filter, max_tubes, feather)
         })
@@ -432,4 +473,37 @@ async fn run_render(
     }
 
     Ok(out.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stills_past_the_limit_wait_their_turn() {
+        let mut held = Vec::new();
+        for _ in 0..still_limit() {
+            held.push(still_slot().await);
+        }
+        let waiting =
+            tokio::time::timeout(std::time::Duration::from_millis(50), still_slot()).await;
+        assert!(waiting.is_err());
+        drop(held);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), still_slot())
+                .await
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn the_still_cache_stops_growing_at_its_limit() {
+        let cache = DashMap::new();
+        for id in 0..(MAX_CACHED_STILLS as u64 + 50) {
+            remember_still(&cache, id, Arc::new(vec![0u8; 8]));
+        }
+        assert_eq!(cache.len(), MAX_CACHED_STILLS);
+        // The newest is always kept.
+        assert!(cache.contains_key(&(MAX_CACHED_STILLS as u64 + 49)));
+    }
 }

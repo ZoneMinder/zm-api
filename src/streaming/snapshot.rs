@@ -186,6 +186,7 @@ impl SnapshotService {
         codec: VideoCodec,
     ) -> Result<Vec<u8>, SnapshotError> {
         let data = video_data.to_vec();
+        let _slot = decode_slot().await;
         tokio::task::spawn_blocking(move || Self::decode_to_jpeg_blocking(&data, codec))
             .await
             .map_err(|e| SnapshotError::DecodeFailed(format!("Task join error: {}", e)))?
@@ -305,6 +306,31 @@ impl SnapshotService {
     }
 }
 
+/// How many frames may be decoded at once: one per core, and at least two.
+///
+/// Each snapshot, thumbnail and frame request decodes video on a blocking
+/// thread, and Tokio will start hundreds of those. A viewer asking for many
+/// at once (a page of thumbnails, or on purpose) would have every core
+/// decoding and nothing left for capture or the API. Requests past the limit
+/// wait their turn.
+fn decode_limit() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2)
+        .max(2)
+}
+
+static DECODE_SLOTS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+
+/// Wait for a place to decode. Dropped when the decode is done.
+async fn decode_slot() -> tokio::sync::SemaphorePermit<'static> {
+    DECODE_SLOTS
+        .get_or_init(|| tokio::sync::Semaphore::new(decode_limit()))
+        .acquire()
+        .await
+        .expect("the decode semaphore is never closed")
+}
+
 /// Extract the first decodable video frame from an MP4 and encode it as JPEG.
 ///
 /// Async wrapper around the blocking libav pipeline; runs on a blocking thread
@@ -315,6 +341,7 @@ pub async fn extract_mp4_thumbnail(
     path: PathBuf,
     max_width: u32,
 ) -> Result<Vec<u8>, SnapshotError> {
+    let _slot = decode_slot().await;
     tokio::task::spawn_blocking(move || extract_mp4_thumbnail_blocking(&path, None, max_width))
         .await
         .map_err(|e| SnapshotError::DecodeFailed(format!("Task join error: {}", e)))?
@@ -329,6 +356,7 @@ pub async fn extract_mp4_frame_at(
     seconds: f64,
     max_width: u32,
 ) -> Result<Vec<u8>, SnapshotError> {
+    let _slot = decode_slot().await;
     tokio::task::spawn_blocking(move || {
         extract_mp4_thumbnail_blocking(&path, Some(seconds.max(0.0)), max_width)
     })
@@ -636,6 +664,22 @@ impl KeyframeCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Decodes past the limit wait; they are not all started at once.
+    #[tokio::test]
+    async fn decodes_are_limited_to_the_number_of_cores() {
+        assert!(decode_limit() >= 2);
+        let held: Vec<_> =
+            futures_util::future::join_all((0..decode_limit()).map(|_| decode_slot())).await;
+        // Every place is taken, so one more has to wait.
+        let waiting =
+            tokio::time::timeout(std::time::Duration::from_millis(50), decode_slot()).await;
+        assert!(waiting.is_err(), "a decode past the limit must wait");
+        drop(held);
+        // And gets its turn once one finishes.
+        let turn = tokio::time::timeout(std::time::Duration::from_secs(5), decode_slot()).await;
+        assert!(turn.is_ok());
+    }
 
     /// Build a single-NAL `VideoPacket`. `nal_type` is the raw NAL header byte
     /// (lower 5 bits select the type: 7 = SPS, 8 = PPS, 5 = IDR slice).

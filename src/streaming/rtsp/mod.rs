@@ -128,6 +128,8 @@ pub async fn start(state: AppState, shutdown: watch::Receiver<bool>) {
         state: state.clone(),
     };
     let slots = Arc::new(Semaphore::new(cfg.max_connections.max(1)));
+    // Shared by the plain and TLS listeners: an address is one client.
+    let per_address = PerAddress::default();
 
     let tls = match cfg.tls_port {
         None => None,
@@ -170,8 +172,54 @@ pub async fn start(state: AppState, shutdown: watch::Receiver<bool>) {
             acceptor,
             backend.clone(),
             slots.clone(),
+            per_address.clone(),
             shutdown.clone(),
         ));
+    }
+}
+
+/// The most connections one address may hold at a time. A connection takes a
+/// slot before it has shown a signed link, and keeps it for up to 15 seconds
+/// without one, so with only the overall limit a single host could hold every
+/// slot and shut all viewers out. Sixteen leaves room for a recorder pulling
+/// many cameras from one address.
+const MAX_PER_ADDRESS: usize = 16;
+
+/// How many connections each address holds.
+#[derive(Clone, Default)]
+struct PerAddress(Arc<std::sync::Mutex<std::collections::HashMap<std::net::IpAddr, usize>>>);
+
+/// One address's connection, counted until dropped.
+struct AddressSlot {
+    counts: PerAddress,
+    ip: std::net::IpAddr,
+}
+
+impl PerAddress {
+    /// A slot for `ip`, unless it already holds `limit`.
+    fn try_acquire(&self, ip: std::net::IpAddr, limit: usize) -> Option<AddressSlot> {
+        let mut counts = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let held = counts.entry(ip).or_insert(0);
+        if *held >= limit {
+            return None;
+        }
+        *held += 1;
+        Some(AddressSlot {
+            counts: self.clone(),
+            ip,
+        })
+    }
+}
+
+impl Drop for AddressSlot {
+    fn drop(&mut self) {
+        let mut counts = self.counts.0.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(held) = counts.get_mut(&self.ip) {
+            *held -= 1;
+            if *held == 0 {
+                counts.remove(&self.ip);
+            }
+        }
     }
 }
 
@@ -180,6 +228,7 @@ async fn accept_loop(
     tls: Option<TlsAcceptor>,
     backend: ZmBackend,
     slots: Arc<Semaphore>,
+    per_address: PerAddress,
     mut shutdown: watch::Receiver<bool>,
 ) {
     loop {
@@ -194,6 +243,10 @@ async fn accept_loop(
             },
             _ = async { let _ = shutdown.wait_for(|v| *v).await; } => return,
         };
+        let Some(address_slot) = per_address.try_acquire(peer.ip(), MAX_PER_ADDRESS) else {
+            warn!("rtsp: {peer} already holds {MAX_PER_ADDRESS} connections; refusing another");
+            continue;
+        };
         let Ok(permit) = slots.clone().try_acquire_owned() else {
             warn!("rtsp: connection limit reached; refusing {peer}");
             continue;
@@ -203,6 +256,7 @@ async fn accept_loop(
         let tls = tls.clone();
         tokio::spawn(async move {
             let _permit = permit;
+            let _address_slot = address_slot;
             let peer = peer.to_string();
             match tls {
                 None => session::serve(sock, backend, peer).await,
@@ -263,6 +317,24 @@ pub fn host_from_header(value: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::configure::streaming::RtspConfig;
+
+    #[test]
+    fn one_address_cannot_take_every_connection() {
+        let counts = PerAddress::default();
+        let hog: std::net::IpAddr = "203.0.113.7".parse().unwrap();
+        let viewer: std::net::IpAddr = "198.51.100.2".parse().unwrap();
+
+        let held: Vec<_> = (0..3)
+            .map(|_| counts.try_acquire(hog, 3).unwrap())
+            .collect();
+        assert!(counts.try_acquire(hog, 3).is_none());
+        // Someone else is not affected.
+        assert!(counts.try_acquire(viewer, 3).is_some());
+        // A closed connection frees its place, and an idle address is forgotten.
+        drop(held);
+        assert!(counts.try_acquire(hog, 3).is_some());
+        assert!(counts.0.lock().unwrap().is_empty());
+    }
 
     #[test]
     fn links_use_the_public_host_or_the_request_host() {

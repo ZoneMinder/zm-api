@@ -134,7 +134,20 @@ impl KeyExtractor for IpKeyExtractor {
             .get::<ConnectInfo<SocketAddr>>()
             .map(|ConnectInfo(a)| a.ip())
             .ok_or(GovernorError::UnableToExtractKey)?;
-        Ok(self.client_ip(peer, req.headers()))
+        Ok(limit_key(self.client_ip(peer, req.headers())))
+    }
+}
+
+/// The address a client is counted under. An IPv6 client is its /64: a
+/// subscriber is given at least that many addresses, so counting each one
+/// separately would hand them 2^64 allowances and no limit on login guesses.
+fn limit_key(ip: IpAddr) -> IpAddr {
+    match canonical(ip) {
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            IpAddr::V6(std::net::Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0))
+        }
+        v4 => v4,
     }
 }
 
@@ -317,6 +330,21 @@ mod tests {
     use super::*;
     use std::net::Ipv4Addr;
 
+    #[test]
+    fn ipv6_clients_are_counted_by_their_64() {
+        let key = |s: &str| limit_key(s.parse().unwrap());
+        // Two addresses a single subscriber can pick at will: one bucket.
+        assert_eq!(
+            key("2001:db8:1:2::1"),
+            key("2001:db8:1:2:ffff:ffff:ffff:ffff")
+        );
+        // Another /64 is another client.
+        assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
+        // IPv4 is counted per address, mapped or not.
+        assert_eq!(key("203.0.113.9"), key("::ffff:203.0.113.9"));
+        assert_ne!(key("203.0.113.9"), key("203.0.113.10"));
+    }
+
     fn defaults(trust_proxy: bool) -> IpKeyExtractor {
         let list: Vec<String> = DEFAULT_TRUSTED_PROXIES
             .iter()
@@ -434,7 +462,8 @@ mod tests {
         );
         assert_eq!(
             key(&e, "127.0.0.1", &[("x-forwarded-for", "[2001:db8::1]")]),
-            ip("2001:db8::1")
+            // The limiter's key for an IPv6 client is its /64.
+            ip("2001:db8::")
         );
         // A v4-mapped peer is loopback too.
         assert_eq!(

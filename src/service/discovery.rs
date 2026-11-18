@@ -501,6 +501,7 @@ fn onvif_to_app_error(e: OnvifError) -> AppError {
             warn!(error = %msg, "Malformed ONVIF response.");
             AppError::ServiceUnavailableError("the device's answer is not ONVIF".into())
         }
+        OnvifError::Refused(msg) => AppError::PermissionDeniedError(msg),
     }
 }
 

@@ -277,6 +277,71 @@ fn parse_origin_rules(raw: &str) -> Vec<OriginRule> {
         .collect()
 }
 
+/// How long a request body may go without sending anything. The header
+/// timeout (`server::bounded`) ends a request that never sends its head; this
+/// ends one that sends the head and then stalls on the body, which the login
+/// route would otherwise wait on for ever, from anyone.
+const BODY_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How often a rate limiter's idle entries are dropped.
+const LIMITER_SWEEP: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Drop a limiter's entries for clients that have not called lately.
+///
+/// The limiter keeps one entry per client address and never removes any on
+/// its own. The login limiter is on by default and answers before any
+/// authentication, so without this anyone who can send from many addresses
+/// (an IPv6 /64 is enough) grows the map until the server runs out of memory.
+macro_rules! forget_idle_clients {
+    ($conf:expr) => {{
+        let limiter = std::sync::Arc::downgrade($conf.limiter());
+        run_every(LIMITER_SWEEP, move || match limiter.upgrade() {
+            Some(limiter) => {
+                limiter.retain_recent();
+                true
+            }
+            // The router that owned it is gone.
+            None => false,
+        });
+    }};
+}
+
+/// Call `f` every `period` until it returns false. Does nothing outside a
+/// Tokio runtime (a router built in a plain unit test).
+fn run_every(period: std::time::Duration, mut f: impl FnMut() -> bool + Send + 'static) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    runtime.spawn(async move {
+        let mut tick = tokio::time::interval(period);
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            if !f() {
+                break;
+            }
+        }
+    });
+}
+
+/// What a request's log span says of its URI: the path, without the query.
+/// Media URLs carry credentials there (`?token=<JWT>`, `?st=<signed link>`),
+/// and the default span records the whole URI on every line logged while the
+/// request runs, where anyone reading a debug log could lift them.
+fn logged_uri(uri: &axum::http::Uri) -> &str {
+    uri.path()
+}
+
+/// `TraceLayer`'s default span, with [`logged_uri`] for the URI.
+fn request_span<B>(request: &axum::http::Request<B>) -> tracing::Span {
+    tracing::debug_span!(
+        "request",
+        method = %request.method(),
+        uri = %logged_uri(request.uri()),
+        version = ?request.version(),
+    )
+}
+
 /// Apply the cross-cutting middleware stack to the fully-merged router.
 ///
 /// Outermost → innermost: tracing, security headers, body-size limit,
@@ -320,6 +385,7 @@ fn apply_common_middleware(
                     burst,
                     mw.trust_proxy_headers,
                 );
+                forget_idle_clients!(conf);
                 Some(crate::util::rate_limit::ExemptLayer::new(
                     GovernorLayer::new(conf)
                         .error_handler(crate::util::rate_limit::too_many_requests),
@@ -344,7 +410,7 @@ fn apply_common_middleware(
     });
 
     let stack = ServiceBuilder::new()
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http().make_span_with(request_span))
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS,
             HeaderValue::from_static("nosniff"),
@@ -359,6 +425,9 @@ fn apply_common_middleware(
         ))
         .option_layer(hsts_layer)
         .layer(DefaultBodyLimit::max(mw.body_limit_bytes))
+        .layer(tower_http::timeout::RequestBodyTimeoutLayer::new(
+            BODY_IDLE_TIMEOUT,
+        ))
         .option_layer(rate_limit_layer)
         .layer(cors);
 
@@ -414,6 +483,7 @@ pub fn create_router_app(state: AppState) -> Router {
                     mw.auth_rate_limit_burst,
                     mw.trust_proxy_headers,
                 );
+                forget_idle_clients!(conf);
                 routes.layer(
                     GovernorLayer::new(conf)
                         .error_handler(crate::util::rate_limit::too_many_requests),
@@ -869,6 +939,80 @@ mod tests {
     fn allows(rules: &[OriginRule], origin: &str) -> bool {
         let o = hv(origin);
         rules.iter().any(|r| r.matches(&o))
+    }
+
+    /// A body that stops arriving ends the request; it does not hold it open.
+    #[tokio::test]
+    async fn a_stalled_request_body_ends_the_request() {
+        use tower::ServiceExt;
+        let app: Router = Router::new()
+            .route(
+                "/echo",
+                axum::routing::post(
+                    |body: axum::body::Bytes| async move { body.len().to_string() },
+                ),
+            )
+            .layer(tower_http::timeout::RequestBodyTimeoutLayer::new(
+                std::time::Duration::from_millis(100),
+            ));
+        // One chunk, then nothing, and never an end.
+        let stalled = futures_util::StreamExt::chain(
+            futures_util::stream::once(async {
+                Ok::<_, std::io::Error>(axum::body::Bytes::from("{"))
+            }),
+            futures_util::stream::pending(),
+        );
+        let request = axum::http::Request::post("/echo")
+            .body(axum::body::Body::from_stream(stalled))
+            .unwrap();
+        let response =
+            tokio::time::timeout(std::time::Duration::from_secs(5), app.oneshot(request))
+                .await
+                .expect("the request must not hang")
+                .unwrap();
+        assert!(response.status().is_client_error(), "{}", response.status());
+    }
+
+    #[tokio::test]
+    async fn a_periodic_sweep_runs_until_told_to_stop() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let runs = std::sync::Arc::new(AtomicU32::new(0));
+        let seen = runs.clone();
+        run_every(std::time::Duration::from_millis(5), move || {
+            seen.fetch_add(1, Ordering::SeqCst) < 2
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // Three calls: two that said carry on, and the one that said stop.
+        assert_eq!(runs.load(Ordering::SeqCst), 3);
+    }
+
+    /// The limiter's map must not keep every address it has ever seen.
+    #[tokio::test]
+    async fn an_idle_clients_rate_limit_entry_is_dropped() {
+        let conf = GovernorConfigBuilder::default()
+            .per_millisecond(1)
+            .burst_size(1)
+            .key_extractor(IpKeyExtractor::new(false, &[]))
+            .finish()
+            .unwrap();
+        let limiter = conf.limiter().clone();
+        for n in 0..50u8 {
+            let _ = limiter.check_key(&std::net::IpAddr::from([10, 0, 0, n]));
+        }
+        assert_eq!(limiter.len(), 50);
+        // Past the 1 ms refill, every entry is idle.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        limiter.retain_recent();
+        assert_eq!(limiter.len(), 0);
+    }
+
+    #[test]
+    fn a_logged_uri_leaves_out_the_query_and_its_credentials() {
+        let uri: axum::http::Uri =
+            "/api/v3/monitors/1/snapshot?token=eyJhbGciOi.secret&st=1.m.1.sig"
+                .parse()
+                .unwrap();
+        assert_eq!(logged_uri(&uri), "/api/v3/monitors/1/snapshot");
     }
 
     #[test]

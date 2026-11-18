@@ -752,6 +752,12 @@ pub async fn webrtc_websocket_handler(
     // hardcoded Google STUN defaults (REVIEW_FIXES_PLAN §2.2).
     let webrtc_config = WebRtcLiveConfig::from_webrtc_config(&state.config.streaming.webrtc);
 
+    // Signalling is an SDP answer and ICE candidates, a few kilobytes each.
+    // The default limit is 64 MiB a message, which a viewer could make the
+    // server buffer.
+    let ws = ws
+        .max_message_size(MAX_SIGNALING_BYTES)
+        .max_frame_size(MAX_SIGNALING_BYTES);
     Ok(ws.on_upgrade(move |socket| async move {
         let _slot = slot;
         handle_webrtc_websocket(state, router, monitor_id, viewer, webrtc_config, socket).await
@@ -779,6 +785,9 @@ async fn inject_startup_keyframe(
     pump.inject_keyframe(webrtc_manager, keyframe.as_ref())
         .await
 }
+
+/// The largest signalling message a WebSocket client may send.
+const MAX_SIGNALING_BYTES: usize = 256 * 1024;
 
 /// The user a WebSocket session streams to, rechecked while it runs.
 #[derive(Debug, Clone, Copy)]
@@ -971,6 +980,16 @@ async fn handle_webrtc_websocket(
                             match signaling_msg {
                                 WebRtcSignalingMessage::Answer { session_id: sid, sdp }
                                     if sid == session_id => {
+                                        if let Err(reason) = crate::streaming::live::webrtc::check_remote_sdp(&sdp) {
+                                            warn!("WebRTC session {}: refusing the answer: {}", session_id, reason);
+                                            let error_msg = WebRtcSignalingMessage::Error {
+                                                message: format!("Invalid SDP answer: {reason}"),
+                                            };
+                                            if let Ok(json) = serde_json::to_string(&error_msg) {
+                                                let _ = ws_sender.send(Message::Text(json.into())).await;
+                                            }
+                                            break;
+                                        }
                                         let answer = match webrtc::peer_connection::RTCSessionDescription::answer(sdp) {
                                             Ok(a) => a,
                                             Err(e) => {

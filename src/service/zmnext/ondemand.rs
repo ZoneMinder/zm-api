@@ -81,10 +81,63 @@ async fn send(
             "live streaming is disabled, so there is no worker connection".into(),
         )
     })?;
+    let _slot = IN_FLIGHT
+        .try_acquire(monitor_id, MAX_IN_FLIGHT_PER_MONITOR)
+        .ok_or_else(|| {
+            AppError::ServiceUnavailableError(format!(
+                "monitor {monitor_id}'s worker is already answering \
+                 {MAX_IN_FLIGHT_PER_MONITOR} requests; try again shortly"
+            ))
+        })?;
     router
         .send_command(monitor_id, command, timeout)
         .await
         .map_err(command_error)
+}
+
+/// The most on-demand commands one monitor's worker is sent at a time. Anyone
+/// who may view the monitor can ask for a description, which runs a language
+/// model on the worker for up to the describe timeout. Unlimited, a viewer in
+/// a loop would keep the worker's model busy and starve its own detection.
+const MAX_IN_FLIGHT_PER_MONITOR: usize = 2;
+
+static IN_FLIGHT: once_cell::sync::Lazy<InFlight> = once_cell::sync::Lazy::new(InFlight::default);
+
+/// How many commands each monitor's worker is answering.
+#[derive(Default)]
+struct InFlight(std::sync::Mutex<std::collections::HashMap<u32, usize>>);
+
+/// One command in flight, counted until dropped.
+struct InFlightSlot<'a> {
+    counts: &'a InFlight,
+    monitor_id: u32,
+}
+
+impl InFlight {
+    fn try_acquire(&self, monitor_id: u32, limit: usize) -> Option<InFlightSlot<'_>> {
+        let mut counts = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let held = counts.entry(monitor_id).or_insert(0);
+        if *held >= limit {
+            return None;
+        }
+        *held += 1;
+        Some(InFlightSlot {
+            counts: self,
+            monitor_id,
+        })
+    }
+}
+
+impl Drop for InFlightSlot<'_> {
+    fn drop(&mut self) {
+        let mut counts = self.counts.0.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(held) = counts.get_mut(&self.monitor_id) {
+            *held -= 1;
+            if *held == 0 {
+                counts.remove(&self.monitor_id);
+            }
+        }
+    }
 }
 
 fn command_error(e: CommandError) -> AppError {
@@ -143,6 +196,19 @@ fn u32_field(detail: &Value, key: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_monitors_worker_is_sent_only_so_many_commands_at_once() {
+        let counts = super::InFlight::default();
+        let a = counts.try_acquire(7, 2).unwrap();
+        let _b = counts.try_acquire(7, 2).unwrap();
+        assert!(counts.try_acquire(7, 2).is_none());
+        // Another monitor has its own allowance.
+        assert!(counts.try_acquire(8, 2).is_some());
+        // A finished command frees its place.
+        drop(a);
+        assert!(counts.try_acquire(7, 2).is_some());
+    }
+
     use super::*;
 
     #[tokio::test]
