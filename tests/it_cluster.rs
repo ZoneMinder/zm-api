@@ -19,7 +19,7 @@ use axum::Router;
 use common::assertions::{assert_error, assert_status};
 use common::fixtures::{insert_monitor, RowGuard};
 use common::harness::{superuser_token, TestApp};
-use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use serde_json::json;
 use zm_api::cluster::Cluster;
 use zm_api::configure::cluster::ClusterConfig;
@@ -595,4 +595,286 @@ async fn two_real_servers_share_one_token() {
         .patch_json(&path, &viewer, &json!({ "notes": "nope" }))
         .await;
     assert_status(&r, StatusCode::FORBIDDEN);
+}
+
+// ---- Recordings: a storage area that belongs to one server -----------------
+
+/// A storage area that `server` holds (`None`: shared by every server).
+async fn storage_on(
+    db: &DatabaseConnection,
+    label: &str,
+    server: Option<u32>,
+) -> (zm_api::entity::storage::Model, RowGuard) {
+    use zm_api::entity::sea_orm_active_enums::Scheme;
+    let storage =
+        common::fixtures::insert_storage(db, label, "/nonexistent/zm-cluster", Scheme::Medium)
+            .await
+            .expect("storage");
+    let guard = RowGuard::storage(storage.id);
+    let mut row: zm_api::entity::storage::ActiveModel = storage.into();
+    row.server_id = Set(server);
+    (row.update(db).await.expect("set server"), guard)
+}
+
+/// An event of `monitor_id` recorded on `storage_id`.
+async fn event_on(db: &DatabaseConnection, monitor_id: u32, storage_id: u16) -> (u64, RowGuard) {
+    let start = zm_api::util::time::db_datetime(zm_api::util::time::utc_now());
+    let id = zm_api::entity::events::ActiveModel {
+        monitor_id: Set(monitor_id),
+        storage_id: Set(Some(storage_id)),
+        state_id: Set(1),
+        name: Set(common::fixtures::unique_name("ClusterEvent")),
+        scheme: Set(zm_api::entity::sea_orm_active_enums::Scheme::Medium),
+        start_date_time: Set(Some(start)),
+        end_date_time: Set(Some(start)),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("event")
+    .id;
+    let guard = RowGuard::new(format!("Events#{id}"), move |db| async move {
+        let _ = zm_api::entity::events::Entity::delete_by_id(id)
+            .exec(&db)
+            .await;
+    });
+    (id, guard)
+}
+
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn a_file_request_for_another_servers_storage_is_relayed_there() {
+    let peer = peer(StatusCode::OK).await;
+    let app = server_one(Some(&peer.url)).await;
+    let monitor = monitor_on(&app.db, "StorageRelay", HERE).await;
+    let _m = RowGuard::monitor(monitor.id);
+    let (storage, _s) = storage_on(&app.db, "StorageRelay", Some(THERE)).await;
+    let (event, _e) = event_on(&app.db, monitor.id, storage.id).await;
+    let token = superuser_token();
+
+    // Playback routes are nested and take a query: the owner gets all of it.
+    for path in [
+        format!("/api/v3/events/{event}/thumbnail?width=120"),
+        format!("/api/v3/events/{event}/stream/playlist.m3u8"),
+        format!("/api/v3/events/{event}/frames/1/image"),
+        format!("/api/v3/events/{event}/videos"),
+        format!("/api/v3/events/{event}/info"),
+    ] {
+        let r = app.get(&path, &token).await;
+        assert_status(&r, StatusCode::OK);
+        assert_eq!(r.text(), "from server 2", "{path}");
+    }
+    let seen = peer.seen();
+    assert_eq!(seen.len(), 5);
+    assert_eq!(
+        seen[0].path_and_query,
+        format!("/api/v3/events/{event}/thumbnail?width=120")
+    );
+    assert_eq!(
+        seen[0].headers[header::AUTHORIZATION],
+        format!("Bearer {token}")
+    );
+    assert_eq!(seen[0].headers["x-zm-forwarded-by"], "1");
+}
+
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn shared_storage_is_not_relayed() {
+    let peer = peer(StatusCode::OK).await;
+    let app = server_one(Some(&peer.url)).await;
+    let monitor = monitor_on(&app.db, "StorageShared", THERE).await;
+    let _m = RowGuard::monitor(monitor.id);
+    let (none, _a) = storage_on(&app.db, "SharedNull", None).await;
+    let (zero, _b) = storage_on(&app.db, "SharedZero", Some(0)).await;
+    for storage in [none, zero] {
+        let (event, _e) = event_on(&app.db, monitor.id, storage.id).await;
+        let r = app
+            .get(
+                &format!("/api/v3/events/{event}/thumbnail"),
+                &superuser_token(),
+            )
+            .await;
+        assert_ne!(r.text(), "from server 2");
+    }
+    assert!(peer.seen().is_empty());
+}
+
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn this_servers_own_storage_is_not_relayed() {
+    let peer = peer(StatusCode::OK).await;
+    let app = server_one(Some(&peer.url)).await;
+    // The monitor runs on server 2, but its recordings are on this server.
+    let monitor = monitor_on(&app.db, "StorageLocal", THERE).await;
+    let _m = RowGuard::monitor(monitor.id);
+    let (storage, _s) = storage_on(&app.db, "StorageLocal", Some(HERE)).await;
+    let (event, _e) = event_on(&app.db, monitor.id, storage.id).await;
+
+    let r = app
+        .get(
+            &format!("/api/v3/events/{event}/thumbnail"),
+            &superuser_token(),
+        )
+        .await;
+
+    assert_ne!(r.text(), "from server 2");
+    assert!(peer.seen().is_empty());
+}
+
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn a_single_server_install_relays_no_recordings() {
+    let peer = peer(StatusCode::OK).await;
+    let app = TestApp::spawn().await;
+    let monitor = monitor_on(&app.db, "StorageSingle", HERE).await;
+    let _m = RowGuard::monitor(monitor.id);
+    let (storage, _s) = storage_on(&app.db, "StorageSingle", Some(THERE)).await;
+    let (event, _e) = event_on(&app.db, monitor.id, storage.id).await;
+
+    let r = app
+        .get(
+            &format!("/api/v3/events/{event}/thumbnail"),
+            &superuser_token(),
+        )
+        .await;
+
+    assert_ne!(r.text(), "from server 2");
+    assert!(peer.seen().is_empty());
+}
+
+/// Reading or editing an event's row works on any server.
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn an_events_row_is_answered_here_whatever_its_storage() {
+    let peer = peer(StatusCode::OK).await;
+    let app = server_one(Some(&peer.url)).await;
+    let monitor = monitor_on(&app.db, "StorageRow", HERE).await;
+    let _m = RowGuard::monitor(monitor.id);
+    let (storage, _s) = storage_on(&app.db, "StorageRow", Some(THERE)).await;
+    let (event, _e) = event_on(&app.db, monitor.id, storage.id).await;
+
+    let r = app
+        .get(&format!("/api/v3/events/{event}"), &superuser_token())
+        .await;
+
+    assert_status(&r, StatusCode::OK);
+    assert_eq!(r.json::<serde_json::Value>()["id"], event);
+    assert!(peer.seen().is_empty());
+}
+
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn a_caller_who_cannot_see_the_events_monitor_is_not_relayed() {
+    use common::fixtures::{grant_monitor_permission, insert_user_with_id};
+    use common::harness::token_for;
+    use zm_api::entity::sea_orm_active_enums::Permission;
+    use zm_api::util::authz::UserPermissions;
+
+    let peer = peer(StatusCode::OK).await;
+    let app = server_one(Some(&peer.url)).await;
+    let hidden = monitor_on(&app.db, "StorageHidden", HERE).await;
+    let _h = RowGuard::monitor(hidden.id);
+    let (storage, _s) = storage_on(&app.db, "StorageHidden", Some(THERE)).await;
+    let (event, _e) = event_on(&app.db, hidden.id, storage.id).await;
+
+    const UID: u32 = 990_231;
+    insert_user_with_id(&app.db, UID, "StorageAcl")
+        .await
+        .expect("user");
+    let _u = RowGuard::user(UID);
+    grant_monitor_permission(&app.db, hidden.id, UID, Permission::None)
+        .await
+        .expect("grant");
+    let token = token_for(UID, UserPermissions::superuser());
+
+    for method in [Method::GET, Method::DELETE] {
+        let path = if method == Method::GET {
+            format!("/api/v3/events/{event}/thumbnail")
+        } else {
+            format!("/api/v3/events/{event}")
+        };
+        let r = app.request(method, &path).bearer(&token).send().await;
+        assert_status(&r, StatusCode::NOT_FOUND);
+    }
+    assert!(peer.seen().is_empty());
+}
+
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn deleting_an_event_on_another_servers_storage_is_relayed() {
+    let peer = peer(StatusCode::NO_CONTENT).await;
+    let app = server_one(Some(&peer.url)).await;
+    let monitor = monitor_on(&app.db, "StorageDelete", HERE).await;
+    let _m = RowGuard::monitor(monitor.id);
+    let (storage, _s) = storage_on(&app.db, "StorageDelete", Some(THERE)).await;
+    let (event, _e) = event_on(&app.db, monitor.id, storage.id).await;
+
+    let r = app
+        .request(Method::DELETE, &format!("/api/v3/events/{event}"))
+        .bearer(&superuser_token())
+        .send()
+        .await;
+
+    assert_status(&r, StatusCode::NO_CONTENT);
+    let seen = peer.seen();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].method, Method::DELETE);
+    assert_eq!(seen[0].path_and_query, format!("/api/v3/events/{event}"));
+    // This server left the row for the owner to remove along with the files.
+    let rows = zm_api::entity::events::Entity::find_by_id(event)
+        .one(&app.db)
+        .await
+        .unwrap();
+    assert!(rows.is_some());
+}
+
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn a_file_request_that_was_already_relayed_is_not_relayed_again() {
+    let peer = peer(StatusCode::OK).await;
+    let app = server_one(Some(&peer.url)).await;
+    let monitor = monitor_on(&app.db, "StorageLoop", HERE).await;
+    let _m = RowGuard::monitor(monitor.id);
+    let (storage, _s) = storage_on(&app.db, "StorageLoop", Some(THERE)).await;
+    let (event, _e) = event_on(&app.db, monitor.id, storage.id).await;
+
+    let r = app
+        .request(Method::GET, &format!("/api/v3/events/{event}/thumbnail"))
+        .bearer(&superuser_token())
+        .header("x-zm-forwarded-by", "2")
+        .send()
+        .await;
+
+    assert_error(
+        &r,
+        StatusCode::MISDIRECTED_REQUEST,
+        "MISDIRECTED_REQUEST_ERROR",
+    );
+    assert!(peer.seen().is_empty());
+}
+
+/// The storage list shows another server's area without a disk reading: the
+/// path on this server is not that disk.
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn another_servers_storage_shows_no_disk_figures() {
+    let app = server_one(None).await;
+    let (peers, _p) = storage_on(&app.db, "ListPeer", Some(THERE)).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (here, _h) = storage_on(&app.db, "ListHere", Some(HERE)).await;
+    let mut row: zm_api::entity::storage::ActiveModel = here.clone().into();
+    row.path = Set(tmp.path().to_str().unwrap().to_string());
+    row.update(&app.db).await.unwrap();
+
+    let token = superuser_token();
+    let theirs = app
+        .get(&format!("/api/v3/storage/{}", peers.id), &token)
+        .await
+        .json::<serde_json::Value>();
+    assert!(theirs["filesystem"].is_null(), "{theirs}");
+    let ours = app
+        .get(&format!("/api/v3/storage/{}", here.id), &token)
+        .await
+        .json::<serde_json::Value>();
+    assert!(ours["filesystem"].is_object(), "{ours}");
 }

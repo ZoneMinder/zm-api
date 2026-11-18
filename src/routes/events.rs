@@ -1,17 +1,21 @@
-use axum::{middleware, routing::get, Router};
+use axum::{
+    middleware,
+    routing::{delete, get},
+    Router,
+};
 
 use crate::util::middleware::auth_middleware;
 use crate::{handlers, server::state::AppState};
 
 /// Create events router using JWT middleware
-pub fn add_event_routes(router: Router<AppState>) -> Router<AppState> {
+pub fn add_event_routes(router: Router<AppState>, state: AppState) -> Router<AppState> {
     router.nest(
         "/api/v3/events",
-        routes().layer(middleware::from_fn(auth_middleware)),
+        routes(state).layer(middleware::from_fn(auth_middleware)),
     )
 }
 
-pub fn routes() -> Router<AppState> {
+pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
         // Use fully qualified handler paths
         .route(
@@ -20,10 +24,16 @@ pub fn routes() -> Router<AppState> {
         )
         .route(
             "/{id}",
-            // Use fully qualified handler paths
-            get(handlers::events::get_event)
-                .patch(handlers::events::update_event)
-                .delete(handlers::events::delete_event),
+            get(handlers::events::get_event).patch(handlers::events::update_event),
+        )
+        // Deleting removes the files too, and only the server that holds
+        // them can. Reading or editing the row works on any server.
+        .route(
+            "/{id}",
+            delete(handlers::events::delete_event).route_layer(middleware::from_fn_with_state(
+                state,
+                crate::cluster::forward::forward_to_storage_owner,
+            )),
         )
         // Live events and alarm states (Server-Sent Events)
         .route("/stream", get(handlers::event_stream::stream_events))

@@ -52,6 +52,10 @@ const RESYNC_EVERY: usize = 25;
 pub struct RetentionService {
     db: Arc<DatabaseConnection>,
     config: RetentionConfig,
+    /// Which `Servers` row this host is. A storage area that names another
+    /// server holds files this host can't see, so it is left alone.
+    this_server: Option<u32>,
+    announced: crate::cluster::SkipLog,
 }
 
 /// Outcome of reaping a single storage, for logging.
@@ -91,7 +95,18 @@ pub(crate) trait ReapIo: Send + Sync {
 
 impl RetentionService {
     pub fn new(db: Arc<DatabaseConnection>, config: RetentionConfig) -> Self {
-        Self { db, config }
+        Self {
+            db,
+            config,
+            this_server: None,
+            announced: Default::default(),
+        }
+    }
+
+    /// Record which `Servers` row is this host (`None` = single-server).
+    pub fn with_server_id(mut self, server_id: Option<u32>) -> Self {
+        self.this_server = server_id;
+        self
     }
 
     /// Spawn the periodic reaper loop. Returns immediately.
@@ -169,6 +184,12 @@ impl RetentionService {
         st: &storage::Model,
         is_default: bool,
     ) -> Result<ReapStats, DbErr> {
+        // Another server's storage: its files and its free space are not
+        // visible from here, so neither its events nor its rows are touched.
+        // The server that owns it runs its own reaper.
+        if crate::cluster::skips_peer_storage(&self.announced, "retention", self.this_server, st) {
+            return Ok(ReapStats::default());
+        }
         // Candidate set: events on this storage that are safe to delete.
         let mut storage_match = Condition::any().add(events::Column::StorageId.eq(st.id));
         if is_default {

@@ -249,3 +249,97 @@ async fn a_generated_video_never_replaces_the_recording() {
         .await;
     assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{}", r.text());
 }
+
+/// A server that can't read an event's files leaves its job queued, for the
+/// server that can. The queue is one table in the shared database, so the
+/// other server's worker finds it there.
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn a_job_for_another_servers_storage_is_left_queued() {
+    use std::sync::Arc;
+    use zm_api::cluster::Cluster;
+    use zm_api::configure::cluster::ClusterConfig;
+
+    let iso = common::isolated::IsolatedDb::create().await;
+    let app = TestApp::spawn_on(&iso).await;
+    common::test_db::migrate_test_db(&app.db).await;
+    let token = superuser_token();
+    let tmp = tempfile::tempdir().unwrap();
+    let monitor = insert_monitor(&app.db, "VideoPeer").await.unwrap();
+    let storage = insert_storage(
+        &app.db,
+        "VideoPeer",
+        tmp.path().to_str().unwrap(),
+        Scheme::Shallow,
+    )
+    .await
+    .unwrap();
+    let event = zm_api::entity::events::ActiveModel {
+        monitor_id: Set(monitor.id),
+        storage_id: Set(Some(storage.id)),
+        scheme: Set(Scheme::Shallow),
+        state_id: Set(1),
+        name: Set(format!("Event {}", unique_name("p"))),
+        frames: Set(Some(10)),
+        length: Set(Decimal::new(100, 2)),
+        width: Set(64),
+        height: Set(48),
+        default_video: Set(String::new()),
+        ..Default::default()
+    }
+    .insert(&app.db)
+    .await
+    .unwrap();
+    let id = event.id;
+    let _g = (
+        RowGuard::new(format!("Events#{id}"), move |db| async move {
+            use zm_api::entity::{events, media_jobs};
+            let _ = media_jobs::Entity::delete_many()
+                .filter(media_jobs::Column::EventId.eq(id))
+                .exec(&db)
+                .await;
+            let _ = events::Entity::delete_by_id(id).exec(&db).await;
+        }),
+        RowGuard::storage(storage.id),
+        RowGuard::monitor(monitor.id),
+    );
+
+    let r = app
+        .post_json(&format!("/api/v3/events/{id}/videos"), &token, &json!({}))
+        .await;
+    assert_eq!(r.status(), StatusCode::ACCEPTED, "{}", r.text());
+    let job_id = r.json::<serde_json::Value>()["id"].as_u64().unwrap();
+    let status = || async {
+        let job: serde_json::Value = app
+            .get(&format!("/api/v3/jobs/{job_id}"), &token)
+            .await
+            .json();
+        job["status"].as_str().unwrap().to_string()
+    };
+    let as_server_one = || {
+        let mut state = zm_api::server::state::AppState::for_test_with_db(app.db.clone());
+        state.cluster = Arc::new(Cluster::new(Some(1), &ClusterConfig::default(), 0, false));
+        state
+    };
+
+    // The storage is server 2's: server 1's worker takes nothing.
+    let mut row: zm_api::entity::storage::ActiveModel = storage.into();
+    row.server_id = Set(Some(2));
+    let storage = row.update(&app.db).await.unwrap();
+    assert_eq!(
+        zm_api::service::media_jobs::run_pending(&as_server_one()).await,
+        0
+    );
+    assert_eq!(status().await, "queued");
+
+    // Once it is shared, server 1 may run the job (it fails here: no frames,
+    // and that is all this test needs to see).
+    let mut row: zm_api::entity::storage::ActiveModel = storage.into();
+    row.server_id = Set(None);
+    row.update(&app.db).await.unwrap();
+    assert_eq!(
+        zm_api::service::media_jobs::run_pending(&as_server_one()).await,
+        1
+    );
+    assert_ne!(status().await, "queued");
+}

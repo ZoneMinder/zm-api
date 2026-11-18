@@ -542,7 +542,10 @@ pub fn create_router_app(state: AppState) -> Router {
         Feature::Monitors,
     );
 
-    let events_routes = protect(events::add_event_routes(Router::new()), Feature::Events);
+    let events_routes = protect(
+        events::add_event_routes(Router::new(), state.clone()),
+        Feature::Events,
+    );
     let event_data_routes = protect(
         event_data::add_event_data_routes(Router::new()),
         Feature::Events,
@@ -563,7 +566,7 @@ pub fn create_router_app(state: AppState) -> Router {
         Feature::Events,
     );
     let events_playback_routes = protect(
-        events_playback::add_events_playback_routes(Router::new()),
+        events_playback::add_events_playback_routes(Router::new(), state.clone()),
         Feature::Events,
     );
     // Natural-language / semantic event search. JSON (compressible), so it lives
@@ -716,7 +719,7 @@ pub fn create_router_app(state: AppState) -> Router {
         .merge(snapshot_routes)
         .merge(snapshot_event_routes)
         .merge(protect(
-            media_jobs::add_event_video_routes(Router::new()),
+            media_jobs::add_event_video_routes(Router::new(), state.clone()),
             Feature::Events,
         ))
         .merge(crate::util::authz::protect_at(

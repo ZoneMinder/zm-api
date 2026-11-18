@@ -28,6 +28,7 @@ const MON_UNCLOSED: u32 = 99_313;
 const MON_COUNTERS: u32 = 99_314;
 const MON_LIVE: u32 = 99_315;
 const MON_SUPERSEDED: u32 = 99_316;
+const MON_PEER: u32 = 99_317;
 
 /// Every audit pass sweeps the whole database, not just the calling test's
 /// monitor, so two tests running passes at once can delete or close each
@@ -787,4 +788,84 @@ fn walkdir_files(dir: &std::path::Path) -> Vec<String> {
         }
     }
     out
+}
+
+/// An event on another server's storage is that server's to judge. This host
+/// can't see the files, so the audit neither walks the storage (which would
+/// refuse, or worse, find nothing) nor deletes the event as empty.
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn the_audit_leaves_another_servers_storage_alone() {
+    use common::fixtures::{insert_storage, RowGuard};
+    use sea_orm::{ActiveModelTrait, Set};
+    use zm_api::configure::maintenance::FilesystemAuditConfig;
+    use zm_api::entity::sea_orm_active_enums::Scheme;
+
+    let iso = common::isolated::IsolatedDb::create().await;
+    let _serial = SERIAL.lock().await;
+    const MON: u32 = MON_PEER;
+    let db = Arc::new(iso.connect().await);
+    cleanup(&db, MON, 9_930_070, 9_930_071).await;
+
+    let mut ids = Vec::new();
+    let mut guards = Vec::new();
+    for (label, server) in [("AuditPeer", Some(2u32)), ("AuditShared", None)] {
+        let st = insert_storage(&db, label, "/nonexistent/zm-audit-peer", Scheme::Medium)
+            .await
+            .expect("storage");
+        guards.push(RowGuard::storage(st.id));
+        let mut row: zm_api::entity::storage::ActiveModel = st.clone().into();
+        row.server_id = Set(server);
+        row.update(&*db).await.expect("server");
+        ids.push(st.id);
+    }
+    // Both events are old, frameless and unarchived: empty by the database's
+    // own evidence. Only the one on shared storage is this host's to delete.
+    for (event, storage) in [(9_930_070u64, ids[0]), (9_930_071, ids[1])] {
+        exec(
+            &db,
+            format!(
+                "INSERT INTO Events (Id, MonitorId, StorageId, StateId, StartDateTime, Scheme) \
+                 VALUES ({event}, {MON}, {storage}, 1, DATE_SUB(NOW(), INTERVAL 2 HOUR), 'Medium')"
+            ),
+        )
+        .await;
+    }
+
+    let config = AuditConfig {
+        filesystem: FilesystemAuditConfig {
+            enabled: true,
+            remove_rows_without_media: true,
+            ..Default::default()
+        },
+        ..audit_config(false)
+    };
+    let report = AuditService::new(Arc::clone(&db), config)
+        .with_server_id(Some(1))
+        .run_once()
+        .await
+        .expect("pass");
+
+    let present = |id: u64| {
+        let db = Arc::clone(&db);
+        async move {
+            scalar(
+                &db,
+                &format!("SELECT COUNT(*) AS n FROM Events WHERE Id = {id}"),
+            )
+            .await
+        }
+    };
+    assert_eq!(present(9_930_070).await, 1, "another server's event stays");
+    assert_eq!(present(9_930_071).await, 0, "shared storage is this host's");
+    assert!(
+        report
+            .refusals
+            .iter()
+            .all(|r| !r.contains(&format!("storage {} ", ids[0]))),
+        "the peer's storage was never walked: {:?}",
+        report.refusals
+    );
+
+    cleanup(&db, MON, 9_930_070, 9_930_071).await;
 }
