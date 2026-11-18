@@ -9,6 +9,10 @@ ignore = [
     # paste unmaintained. Build-time-only proc-macro helper, pulled transitively
     # (no runtime code); no maintained drop-in replacement across the tree.
     "RUSTSEC-2024-0436",
+    # chrono unmaintained. An informational notice, not a vulnerability, and no
+    # version fixes it. sea-orm and sqlx require chrono, so it stays in the tree
+    # whatever zm-api's own code uses. Revisit when they offer another time crate.
+    "RUSTSEC-2026-0543",
 ]
 
 [bans]
