@@ -61,6 +61,9 @@ pub struct AppState {
     /// up in `Servers`): which monitors this host's zmdc.pl runs. `None`
     /// when ZoneMinder has none, and then every monitor is local.
     pub server_id: Option<u32>,
+    /// Multi-server installs: which server owns a monitor, and the client
+    /// for relaying its requests there.
+    pub cluster: Arc<crate::cluster::Cluster>,
 }
 
 /// How long a request to another service (the search models, telemetry) may
@@ -325,6 +328,16 @@ impl AppState {
             Err(e) => tracing::warn!("failed to hydrate token revocations from Users: {e}"),
         }
 
+        let cluster = Arc::new(crate::cluster::Cluster::new(
+            this_server.zoneminder_id,
+            &config.cluster,
+            config.server.port,
+            config.server.tls.is_some() || config.server.acme.is_some(),
+        ));
+        // Another server may have handled a logout: follow the floors it wrote.
+        if cluster.relays() {
+            crate::cluster::sync_revocations(db.clone(), revocations.clone());
+        }
         Ok(Self {
             config: Arc::new(config),
             db,
@@ -340,6 +353,7 @@ impl AppState {
             revocations,
             schema_behind,
             server_id: this_server.zoneminder_id,
+            cluster,
             media_job_wake: Arc::new(tokio::sync::Notify::new()),
             event_hub: Default::default(),
             whep: Default::default(),
@@ -387,6 +401,7 @@ impl AppState {
             revocations: std::sync::Arc::new(crate::util::revocation::TokenRevocations::default()),
             schema_behind: None,
             server_id: None,
+            cluster: std::sync::Arc::new(crate::cluster::Cluster::single()),
             media_job_wake: std::sync::Arc::new(tokio::sync::Notify::new()),
             event_hub: Default::default(),
             whep: Default::default(),

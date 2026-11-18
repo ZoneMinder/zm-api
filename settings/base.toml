@@ -364,3 +364,24 @@ max_age_days = 0
 max_bytes = 0
 # Log what would be deleted without deleting (eyeball before enforcing).
 dry_run = false
+
+# Multi-server installs only. Each ZoneMinder server runs its own zm-api, and
+# a request for a monitor another server runs is relayed to the zm-api there,
+# with the caller's own token. Every server must use the same JWT key files
+# ([secret]), or the owning server refuses the relayed token.
+#
+# Nothing here applies to a single-server install.
+[cluster]
+enabled = true
+# The port zm-api listens on at the other servers. Default: this server's own.
+# peer_port = 8443
+connect_timeout_secs = 5
+# How long another server may go without sending anything.
+read_timeout_secs = 30
+# Extra root certificates to trust for the other servers (a private CA).
+# tls_ca_file = "/etc/zm-api/cluster-ca.pem"
+
+# A server's zm-api is assumed to be at this server's scheme and peer_port on
+# its Servers.Hostname. Name it here, by Servers.Id, when it is somewhere else.
+# [cluster.peers]
+# 2 = "https://zm2.lan:8443"

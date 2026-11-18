@@ -21,6 +21,7 @@ pub fn install_crypto_provider() {
 }
 
 pub mod client;
+pub mod cluster;
 pub mod configure;
 pub mod constant;
 pub mod daemon;

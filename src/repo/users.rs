@@ -7,6 +7,24 @@ pub async fn find_all(db: &DatabaseConnection) -> AppResult<Vec<UserModel>> {
     Ok(Users::find().all(db).await?)
 }
 
+/// Every user's token-revocation floor (`TokenMinExpiry`), for the users who
+/// have one.
+pub async fn token_floors(db: &DatabaseConnection) -> AppResult<Vec<(u32, i64)>> {
+    use crate::entity::users::Column;
+    let rows: Vec<(u32, u64)> = Users::find()
+        .select_only()
+        .column(Column::Id)
+        .column(Column::TokenMinExpiry)
+        .filter(Column::TokenMinExpiry.gt(0))
+        .into_tuple()
+        .all(db)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, floor)| (id, floor as i64))
+        .collect())
+}
+
 pub async fn find_paginated(
     db: &DatabaseConnection,
     params: &PaginationParams,

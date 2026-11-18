@@ -15,6 +15,7 @@
 - [Configuration](guide/configuration.md)
 - [TLS and certificates](guide/tls.md)
 - [Passive and takeover mode](guide/takeover.md)
+- [Multi-server installs](guide/multi-server.md)
 - [Recording retention](guide/retention.md)
 - [Replacing the Perl daemons](guide/maintenance.md)
 

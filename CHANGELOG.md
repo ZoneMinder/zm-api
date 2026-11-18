@@ -10,6 +10,15 @@ recognisable path forward.
 
 ### Added
 
+- **Multi-server installs** (#230). Every ZoneMinder server runs a zm-api,
+  and a request for a monitor another server runs is relayed to the zm-api
+  there with the caller's own token: live HLS, WHEP, snapshots, alarms, PTZ,
+  monitor state, pipeline, and edits to the monitor's row. A client needs one
+  address. Every server must share the same JWT key files. New `[cluster]`
+  settings name the other servers where the default (this server's scheme and
+  port on `Servers.Hostname`) is wrong. `GET /api/v3/servers` gains `api_url`
+  and `is_this_server`. See the multi-server guide for the limits: WebSocket
+  signalling, system-wide control and recordings are not relayed yet.
 - **Live event stream**, `GET /api/v3/events/stream` (Server-Sent Events):
   `event_start`, `event_end` and `event_updated` (notes changed, where object
   detection writes) for every monitor the caller may see, and each monitor's
