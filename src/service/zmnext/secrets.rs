@@ -306,7 +306,7 @@ pub async fn stash_secrets<C: ConnectionTrait>(
 
     if !literals.is_empty() {
         let key = SecretKey::load_or_create(key_file).map_err(|e| key_error(key_file, e))?;
-        let now = chrono::Utc::now().naive_utc();
+        let now = crate::util::time::utc_now();
         for (name, value) in &literals {
             let sealed = key.seal(monitor_id, name, value);
             crate::repo::zmnext_secret::upsert(db, monitor_id, name, sealed, now).await?;
@@ -342,7 +342,7 @@ pub async fn migrate_row(
         return Ok(row);
     }
     stash_secrets(db, key_file, row.monitor_id, &mut graph).await?;
-    let now = chrono::Utc::now().naive_utc();
+    let now = crate::util::time::utc_now();
     let saved = crate::repo::monitor_pipeline::upsert(
         db,
         row.monitor_id,

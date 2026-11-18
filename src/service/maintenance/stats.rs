@@ -561,7 +561,7 @@ impl StatsService {
     /// These are the PHP web UI's sessions, which nothing else expires.
     async fn prune_sessions(&self) -> Result<(), DbErr> {
         let lifetime = self.cookie_lifetime_secs().await;
-        let cutoff = (chrono::Utc::now().timestamp() as u64).saturating_sub(lifetime);
+        let cutoff = (crate::util::time::unix_now() as u64).saturating_sub(lifetime);
         let backend = self.db.get_database_backend();
         loop {
             let removed = self

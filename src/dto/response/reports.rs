@@ -17,14 +17,19 @@ pub struct ReportResponse {
     pub created_by: Option<u32>,
 }
 
+/// The column's digits labelled UTC, as this endpoint has always reported them.
+fn rfc3339(column: sea_orm::prelude::DateTime) -> String {
+    crate::util::time::rfc3339_offset(crate::util::time::utc_instant(column))
+}
+
 impl From<&ReportModel> for ReportResponse {
     fn from(model: &ReportModel) -> Self {
         Self {
             id: model.id,
             name: model.name.clone(),
             filter_id: model.filter_id,
-            start_date_time: model.start_date_time.map(|dt| dt.and_utc().to_rfc3339()),
-            end_date_time: model.end_date_time.map(|dt| dt.and_utc().to_rfc3339()),
+            start_date_time: model.start_date_time.map(rfc3339),
+            end_date_time: model.end_date_time.map(rfc3339),
             interval: model.interval,
             created_by: model.created_by,
         }

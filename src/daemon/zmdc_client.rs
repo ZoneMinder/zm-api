@@ -46,14 +46,14 @@ fn message(command: &str, spec: Option<&str>) -> String {
 /// The processes listed in a `status` reply. zmdc.pl writes one line per
 /// running process, `'zmc -m 1' running since 26/10/18 10:00:00, pid = 1234,
 /// valid`, then one per pending one, `'zmc -m 2' pending at 26/10/18 …`.
-pub fn parse_status(reply: &str, now: chrono::NaiveDateTime) -> Vec<ProcessStatus> {
+pub fn parse_status(reply: &str, now: jiff::civil::DateTime) -> Vec<ProcessStatus> {
     reply
         .lines()
         .filter_map(|line| parse_line(line, now))
         .collect()
 }
 
-fn parse_line(line: &str, now: chrono::NaiveDateTime) -> Option<ProcessStatus> {
+fn parse_line(line: &str, now: jiff::civil::DateTime) -> Option<ProcessStatus> {
     let rest = line.trim().strip_prefix('\'')?;
     let (command, rest) = rest.split_once('\'')?;
     let rest = rest.trim_start();
@@ -63,9 +63,9 @@ fn parse_line(line: &str, now: chrono::NaiveDateTime) -> Option<ProcessStatus> {
             .split(|c: char| !c.is_ascii_digit())
             .next()
             .and_then(|p| p.parse().ok());
-        let uptime = chrono::NaiveDateTime::parse_from_str(since.trim(), "%y/%m/%d %H:%M:%S")
+        let uptime = jiff::civil::DateTime::strptime("%y/%m/%d %H:%M:%S", since.trim())
             .ok()
-            .and_then(|t| (now - t).num_seconds().try_into().ok());
+            .and_then(|t| now.duration_since(t).as_secs().try_into().ok());
         (ProcessState::Running, pid, uptime)
     } else if rest.starts_with("pending at ") {
         (ProcessState::Restarting, None, None)
@@ -105,8 +105,8 @@ fn monitor_id(command: &str) -> Option<u32> {
 mod tests {
     use super::*;
 
-    fn now() -> chrono::NaiveDateTime {
-        chrono::NaiveDateTime::parse_from_str("26/10/18 10:01:40", "%y/%m/%d %H:%M:%S").unwrap()
+    fn now() -> jiff::civil::DateTime {
+        jiff::civil::date(2026, 10, 18).at(10, 1, 40, 0)
     }
 
     #[test]

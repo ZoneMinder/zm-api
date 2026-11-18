@@ -29,7 +29,8 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use crate::util::time;
+use jiff::civil::DateTime as Civil;
 use rust_decimal::Decimal;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
@@ -54,7 +55,7 @@ use crate::streaming::source::{protocol, MonitorEvent, MonitorEventEnvelope};
 struct OpenEvent {
     event_id: u64,
     monitor_id: u32,
-    start: NaiveDateTime,
+    start: Civil,
     frames: u32,
     alarm_frames: u32,
     tot_score: u64,
@@ -65,7 +66,7 @@ struct OpenEvent {
 }
 
 impl OpenEvent {
-    fn new(event_id: u64, monitor_id: u32, start: NaiveDateTime) -> Self {
+    fn new(event_id: u64, monitor_id: u32, start: Civil) -> Self {
         Self {
             event_id,
             monitor_id,
@@ -247,12 +248,12 @@ impl EventIngestor {
             (frame_no, open.clone())
         };
 
-        let delta = decimal_seconds((when - agg.start).num_milliseconds() as f64 / 1000.0);
+        let delta = decimal_seconds(when.duration_since(agg.start).as_millis() as f64 / 1000.0);
         frames::ActiveModel {
             event_id: Set(event_id),
             frame_id: Set(frame_no),
             r#type: Set(FrameType::Alarm),
-            time_stamp: Set(crate::util::utc_to_timestamp(when.and_utc())),
+            time_stamp: Set(crate::util::utc_to_timestamp(time::civil_utc(when))),
             delta: Set(delta),
             score: Set(score),
             ..Default::default()
@@ -305,13 +306,7 @@ impl EventIngestor {
     /// Push an event's description text to the NL/semantic search index. No-op
     /// when search is disabled or the text is empty. Indexing failures are
     /// logged and swallowed — they must never break event ingest.
-    async fn index_for_search(
-        &self,
-        monitor_id: u32,
-        event_id: u64,
-        when: NaiveDateTime,
-        text: String,
-    ) {
+    async fn index_for_search(&self, monitor_id: u32, event_id: u64, when: Civil, text: String) {
         let Some(search) = self.search.as_ref() else {
             return;
         };
@@ -323,7 +318,7 @@ impl EventIngestor {
             .get(&monitor_id)
             .map(|o| o.labels.iter().cloned().collect())
             .unwrap_or_default();
-        let ts = when.and_utc().timestamp();
+        let ts = time::civil_utc(when).as_second();
         if let Err(e) = search
             .index_text(event_id, monitor_id, ts, classes, text)
             .await
@@ -427,7 +422,7 @@ impl EventIngestor {
 
         let mut model = events::ActiveModel {
             id: Set(event_id),
-            end_date_time: Set(Some(end)),
+            end_date_time: Set(Some(time::db_datetime(end))),
             default_video: Set(detail.file_name().to_string()),
             ..Default::default()
         };
@@ -500,9 +495,13 @@ impl EventIngestor {
         let event_id = manifest.assigned_event_id();
         let clip_token = manifest.clip_token.clone();
         let tube_count = manifest.tubes.len() as u32;
-        let now = Utc::now().naive_utc();
+        let now = time::utc_now();
         let expires_at = (self.synopsis.retention_days > 0)
-            .then(|| now + Duration::days(self.synopsis.retention_days as i64));
+            .then(|| {
+                let days = self.synopsis.retention_days as i64;
+                now.saturating_add(jiff::SignedDuration::from_secs(days.saturating_mul(86_400)))
+            })
+            .map(time::db_datetime);
 
         // Locate an existing row: the (monitor, clip_token) key is stable across
         // the handshake; fall back to event_id when no token was sent.
@@ -551,7 +550,7 @@ impl EventIngestor {
                     tube_count: Set(tube_count),
                     source_w: Set(manifest.source_w),
                     source_h: Set(manifest.source_h),
-                    created_at: Set(now),
+                    created_at: Set(time::db_datetime(now)),
                     expires_at: Set(expires_at),
                     ..Default::default()
                 };
@@ -571,7 +570,7 @@ impl EventIngestor {
     async fn ensure_open_event(
         &mut self,
         monitor_id: u32,
-        start: NaiveDateTime,
+        start: Civil,
         cause: Option<String>,
     ) -> AppResult<u64> {
         if let Some(open) = self.open.get(&monitor_id) {
@@ -584,7 +583,7 @@ impl EventIngestor {
             monitor_id: Set(monitor_id),
             name: Set(self.config.event_name.clone()),
             cause: Set(cause),
-            start_date_time: Set(Some(start)),
+            start_date_time: Set(Some(time::db_datetime(start))),
             state_id: Set(state_id),
             width: Set(dims.width),
             height: Set(dims.height),
@@ -660,10 +659,10 @@ impl EventIngestor {
         dims: &MonitorDims,
         monitor_id: u32,
         event_id: u64,
-        start: NaiveDateTime,
+        start: Civil,
     ) -> Option<(String, String)> {
         let root = dims.storage_path.as_deref()?;
-        let date = start.format("%Y-%m-%d");
+        let date = start.strftime("%Y-%m-%d");
         let dir = format!(
             "{}/{monitor_id}/{date}/{event_id}",
             root.trim_end_matches('/')
@@ -674,17 +673,18 @@ impl EventIngestor {
 }
 
 /// EVENT timestamp to use for a row: the wall-clock TLV when present, else now.
-fn event_time(ev: &MonitorEvent) -> NaiveDateTime {
+fn event_time(ev: &MonitorEvent) -> Civil {
     ev.wall_clock_us
         .and_then(micros_to_naive)
-        .unwrap_or_else(|| Utc::now().naive_utc())
+        .unwrap_or_else(time::utc_now)
 }
 
 /// Convert unix-epoch microseconds to a naive-UTC datetime.
-fn micros_to_naive(us: u64) -> Option<NaiveDateTime> {
-    let secs = (us / 1_000_000) as i64;
-    let nanos = ((us % 1_000_000) * 1_000) as u32;
-    DateTime::<Utc>::from_timestamp(secs, nanos).map(|dt| dt.naive_utc())
+fn micros_to_naive(us: u64) -> Option<Civil> {
+    let us = i64::try_from(us).ok()?;
+    jiff::Timestamp::from_microsecond(us)
+        .ok()
+        .map(time::utc_civil)
 }
 
 /// Seconds (possibly fractional) as a ZoneMinder `Decimal`, clamped at 0.
@@ -744,7 +744,7 @@ mod tests {
     fn micros_round_trip_to_known_instant() {
         // 2023-11-14T22:13:20 UTC
         let dt = micros_to_naive(1_700_000_000_000_000).unwrap();
-        assert_eq!(dt.and_utc().timestamp(), 1_700_000_000);
+        assert_eq!(time::civil_utc(dt).as_second(), 1_700_000_000);
     }
 
     #[test]

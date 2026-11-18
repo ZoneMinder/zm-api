@@ -324,18 +324,17 @@ impl MonitorEventListener {
 
     /// Insert a new ZM `Events` row for an opened alarm, returning its id.
     async fn open_event(&self, msg: &NotificationMessage) -> Result<u64, crate::error::AppError> {
-        let start =
-            parse_utc(msg.utc_time.as_deref()).unwrap_or_else(|| chrono::Utc::now().naive_utc());
+        let start = parse_utc(msg.utc_time.as_deref()).unwrap_or_else(crate::util::time::utc_now);
 
         let active = events::ActiveModel {
             monitor_id: Set(self.monitor_id),
             name: Set(format!(
                 "ONVIF-{}-{}",
                 self.monitor_id,
-                start.format("%Y%m%d%H%M%S")
+                start.strftime("%Y%m%d%H%M%S")
             )),
             cause: Set(Some(self.alarm_cause.clone())),
-            start_date_time: Set(Some(start)),
+            start_date_time: Set(Some(crate::util::time::db_datetime(start))),
             notes: Set(msg.topic.clone()),
             ..Default::default()
         };
@@ -351,14 +350,17 @@ impl MonitorEventListener {
             return Ok(());
         };
 
-        let end = chrono::Utc::now().naive_utc();
+        let end = crate::util::time::utc_now();
         let length = event
             .start_date_time
-            .map(|start| (end - start).num_milliseconds().max(0) as f64 / 1000.0)
+            .map(|start| {
+                let elapsed = end.duration_since(crate::util::time::civil(start));
+                elapsed.as_millis().max(0) as f64 / 1000.0
+            })
             .unwrap_or(0.0);
 
         let mut active: events::ActiveModel = event.into();
-        active.end_date_time = Set(Some(end));
+        active.end_date_time = Set(Some(crate::util::time::db_datetime(end)));
         active.length = Set(rust_decimal::Decimal::from_f64_retain(length).unwrap_or_default());
         events_repo::update(&self.state, active).await?;
         Ok(())
@@ -409,11 +411,11 @@ impl AlarmTracker {
 
 /// Parse an ONVIF UTC time attribute (RFC 3339 / ISO 8601) into a naive UTC
 /// datetime. Returns `None` for absent or unparseable values.
-fn parse_utc(s: Option<&str>) -> Option<chrono::NaiveDateTime> {
+fn parse_utc(s: Option<&str>) -> Option<jiff::civil::DateTime> {
     let s = s?;
-    chrono::DateTime::parse_from_rfc3339(s)
+    s.parse::<jiff::Timestamp>()
         .ok()
-        .map(|dt| dt.naive_utc())
+        .map(crate::util::time::utc_civil)
 }
 
 #[cfg(test)]
@@ -475,8 +477,8 @@ mod tests {
     #[test]
     fn parse_utc_handles_rfc3339_and_garbage() {
         assert_eq!(
-            parse_utc(Some("2026-06-20T07:50:49Z")).map(|d| d.to_string()),
-            Some("2026-06-20 07:50:49".to_string())
+            parse_utc(Some("2026-06-20T07:50:49Z")),
+            Some(jiff::civil::date(2026, 6, 20).at(7, 50, 49, 0))
         );
         assert_eq!(parse_utc(Some("not a time")), None);
         assert_eq!(parse_utc(None), None);

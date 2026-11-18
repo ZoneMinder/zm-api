@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use itertools::Itertools;
+use jiff::Timestamp;
 use std::{collections::HashMap, hash::Hash};
 
 use crate::dto::request::Direction;
@@ -25,8 +25,8 @@ pub fn vecs_match<T: PartialEq>(a: &[T], b: &[T]) -> bool {
     a.len() == b.len() && !a.iter().zip(b.iter()).any(|(a, b)| *a != *b)
 }
 
-pub fn compare_datetime(left: &DateTime<Utc>, right: &DateTime<Utc>) -> bool {
-    left.format("%d/%m/%Y %H:%M").to_string() == right.format("%d/%m/%Y %H:%M").to_string()
+pub fn compare_datetime(left: &Timestamp, right: &Timestamp) -> bool {
+    left.strftime("%d/%m/%Y %H:%M").to_string() == right.strftime("%d/%m/%Y %H:%M").to_string()
 }
 
 pub fn exist<T>(haystack: &[T], needle: &T) -> bool
@@ -112,11 +112,11 @@ fn vecs_match_is_order_sensitive() {
 
 #[test]
 fn compare_datetime_matches_to_the_minute() {
-    let base: DateTime<Utc> = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    let base = Timestamp::from_second(1_700_000_000).unwrap();
     // 30 seconds apart — same minute, considered equal.
-    let same_minute = DateTime::from_timestamp(1_700_000_030, 0).unwrap();
+    let same_minute = Timestamp::from_second(1_700_000_030).unwrap();
     // 120 seconds apart — different minute.
-    let next_minute = DateTime::from_timestamp(1_700_000_120, 0).unwrap();
+    let next_minute = Timestamp::from_second(1_700_000_120).unwrap();
     assert!(compare_datetime(&base, &same_minute));
     assert!(!compare_datetime(&base, &next_minute));
 }

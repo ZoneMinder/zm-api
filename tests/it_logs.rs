@@ -24,7 +24,7 @@ async fn insert_log(
     message: &str,
     offset: i64,
 ) {
-    let t = chrono::Utc::now().timestamp() + offset;
+    let t = zm_api::util::time::unix_now() + offset;
     zm_api::entity::logs::ActiveModel {
         time_key: Set(Decimal::new(t, 0)),
         component: Set(component.to_string()),

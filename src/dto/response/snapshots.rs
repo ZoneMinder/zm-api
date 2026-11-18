@@ -1,6 +1,6 @@
 use crate::dto::PaginatedResponse;
 use crate::entity::snapshots::Model as SnapshotModel;
-use chrono::NaiveDateTime;
+use jiff::civil::DateTime as Civil;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -11,7 +11,7 @@ pub struct SnapshotResponse {
     pub description: Option<String>,
     pub created_by: Option<i32>,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00")]
-    pub created_on: Option<NaiveDateTime>,
+    pub created_on: Option<Civil>,
 }
 
 impl From<&SnapshotModel> for SnapshotResponse {
@@ -21,7 +21,7 @@ impl From<&SnapshotModel> for SnapshotResponse {
             name: model.name.clone(),
             description: model.description.clone(),
             created_by: model.created_by,
-            created_on: model.created_on,
+            created_on: model.created_on.map(crate::util::time::civil),
         }
     }
 }

@@ -20,6 +20,11 @@ pub struct MonitorPipelineResponse {
     pub updated_at: String,
 }
 
+/// The column holds UTC digits; label them as the instant they are.
+fn rfc3339(column: sea_orm::prelude::DateTime) -> String {
+    crate::util::time::rfc3339_offset(crate::util::time::utc_instant(column))
+}
+
 impl From<monitor_pipeline::Model> for MonitorPipelineResponse {
     fn from(m: monitor_pipeline::Model) -> Self {
         // The stored graph is validated on write, so it parses; fall back to Null
@@ -29,8 +34,8 @@ impl From<monitor_pipeline::Model> for MonitorPipelineResponse {
             monitor_id: m.monitor_id,
             version: m.version,
             graph,
-            created_at: m.created_at.and_utc().to_rfc3339(),
-            updated_at: m.updated_at.and_utc().to_rfc3339(),
+            created_at: rfc3339(m.created_at),
+            updated_at: rfc3339(m.updated_at),
         }
     }
 }

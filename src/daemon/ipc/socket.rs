@@ -338,17 +338,18 @@ async fn execute_command(cmd: DaemonCommand, manager: &Arc<DaemonManager>) -> Da
 /// zmdc.pl's `status` output, line for line: the web console looks for
 /// `'<command>' running` in it (#83).
 fn legacy_status_text(status: &SystemStatus) -> String {
-    let now = chrono::Local::now();
+    let now = crate::util::time::local_now();
     status
         .daemons
         .iter()
         .map(|d| match d.state {
             ProcessState::Running | ProcessState::Starting => {
-                let since = now - chrono::Duration::seconds(d.uptime_seconds.unwrap_or(0) as i64);
+                let uptime = jiff::SignedDuration::from_secs(d.uptime_seconds.unwrap_or(0) as i64);
+                let since = now.saturating_sub(uptime);
                 format!(
                     "'{}' running since {}, pid = {}",
                     d.id,
-                    since.format("%y/%m/%d %H:%M:%S"),
+                    since.strftime("%y/%m/%d %H:%M:%S"),
                     d.pid.unwrap_or(0)
                 )
             }

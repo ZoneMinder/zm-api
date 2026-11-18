@@ -34,7 +34,7 @@ async fn insert_event_on_storage(
     scheme: Scheme,
     label: &str,
 ) -> u64 {
-    let now = chrono::Utc::now().naive_utc();
+    let now = zm_api::util::time::db_utc_now();
     zm_api::entity::events::ActiveModel {
         monitor_id: Set(monitor_id),
         storage_id: Set(Some(storage_id)),

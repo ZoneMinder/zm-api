@@ -84,7 +84,7 @@ pub async fn replace(
     )
     .await?;
     let body = serde_json::to_string(&graph_doc)?;
-    let now = chrono::Utc::now().naive_utc();
+    let now = crate::util::time::utc_now();
     let row = repo::monitor_pipeline::upsert(state.db(), monitor_id, body, 1, now).await?;
 
     if let WorkerApply::Refused(errors) = apply_to_worker(state, monitor_id).await {
@@ -161,7 +161,7 @@ pub async fn enable_zmnext(
                 synopsis,
             );
             let body = serde_json::to_string(&graph)?;
-            let now = chrono::Utc::now().naive_utc();
+            let now = crate::util::time::utc_now();
             repo::monitor_pipeline::upsert(state.db(), monitor_id, body, 1, now).await?
         }
     };
@@ -221,7 +221,7 @@ async fn restore_graph(
     state: &AppState,
     monitor_id: u32,
     previous: Option<crate::entity::monitor_pipeline::Model>,
-    now: chrono::NaiveDateTime,
+    now: jiff::civil::DateTime,
 ) -> AppResult<()> {
     match previous {
         Some(old) => {

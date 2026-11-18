@@ -238,7 +238,7 @@ async fn run(
     } = handshake;
     let monitor_id = source.monitor_id();
     // The credential check below counts from the session's start.
-    let started = chrono::Utc::now().timestamp();
+    let started = crate::util::time::unix_now();
 
     let connected = tokio::select! {
         r = tokio::time::timeout(

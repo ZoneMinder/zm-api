@@ -368,9 +368,7 @@ pub async fn get_counts_by_monitor(
     use sea_orm::Statement;
 
     // Calculate time boundary
-    let now = chrono::Utc::now();
-    let time_boundary = now - chrono::Duration::hours(hours_back);
-    let time_boundary_str = time_boundary.format("%Y-%m-%d %H:%M:%S").to_string();
+    let time_boundary_str = hours_ago(hours_back);
 
     let mut select = Query::select();
     select
@@ -409,7 +407,7 @@ pub async fn get_counts_by_hour(
     state: &AppState,
     hours_back: i64,
     monitor_filter: Option<&[u32]>,
-) -> Result<Vec<(chrono::NaiveDateTime, u64)>, DbErr> {
+) -> Result<Vec<(jiff::civil::DateTime, u64)>, DbErr> {
     use sea_orm::sea_query::{Expr, Query};
     use sea_orm::{FromQueryResult, Statement};
 
@@ -420,9 +418,7 @@ pub async fn get_counts_by_hour(
     }
 
     // Calculate time boundary
-    let now = chrono::Utc::now();
-    let time_boundary = now - chrono::Duration::hours(hours_back);
-    let time_boundary_str = time_boundary.format("%Y-%m-%d %H:%M:%S").to_string();
+    let time_boundary_str = hours_ago(hours_back);
 
     // Raw SQL for better performance on complex aggregation with grouping by hour
     let hour_alias = Alias::new("hour");
@@ -451,12 +447,8 @@ pub async fn get_counts_by_hour(
     let counts = results
         .into_iter()
         .map(|r| {
-            let naive_date = chrono::NaiveDateTime::parse_from_str(&r.hour, "%Y-%m-%d %H:%M:%S")
-                .unwrap_or_else(|_| {
-                    chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0)
-                        .unwrap()
-                        .naive_utc()
-                });
+            let naive_date = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", &r.hour)
+                .unwrap_or_else(|_| jiff::civil::date(1970, 1, 1).at(0, 0, 0, 0));
             (naive_date, r.count as u64)
         })
         .collect();
@@ -523,6 +515,17 @@ pub async fn find_by_id_with_tags(
         }
         None => Ok(None),
     }
+}
+
+/// The UTC wall-clock `hours_back` hours ago, as `YYYY-MM-DD HH:MM:SS`.
+fn hours_ago(hours_back: i64) -> String {
+    let span = jiff::SignedDuration::from_secs(hours_back.saturating_mul(3600));
+    let boundary = jiff::Timestamp::now()
+        .saturating_sub(span)
+        .unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+    crate::util::time::utc_civil(boundary)
+        .strftime("%Y-%m-%d %H:%M:%S")
+        .to_string()
 }
 
 #[cfg(test)]

@@ -34,8 +34,9 @@ const FAILED: &str = "failed";
 /// A generation that takes longer than this is stopped.
 const VIDEO_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
-fn now() -> chrono::NaiveDateTime {
-    chrono::Utc::now().naive_utc()
+/// The current time as the UTC digits the job columns hold.
+fn now() -> sea_orm::prelude::DateTime {
+    crate::util::time::db_utc_now()
 }
 
 fn event_not_found(id: u64) -> AppError {

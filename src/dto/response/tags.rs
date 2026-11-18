@@ -1,4 +1,4 @@
-use sea_orm::prelude::DateTimeUtc;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -10,7 +10,7 @@ pub struct TagResponse {
     pub id: u64,
     pub name: String,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00Z")]
-    pub create_date: Option<DateTimeUtc>,
+    pub create_date: Option<Timestamp>,
     /// Number of events with this tag
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_count: Option<u64>,

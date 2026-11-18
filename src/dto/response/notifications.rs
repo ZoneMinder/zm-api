@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 use crate::dto::request::notifications::{PushPlatform, PushState};
 use crate::dto::wrappers::DateTimeWrapper;
 use crate::entity::notifications::Model;
-use crate::util::naive_local_to_utc;
+use crate::util::datetime_to_utc;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct NotificationResponse {
@@ -42,8 +42,8 @@ impl From<&Model> for NotificationResponse {
             badge_count: m.badge_count,
             last_notified_at: m
                 .last_notified_at
-                .map(|t| DateTimeWrapper(naive_local_to_utc(t))),
-            created_on: m.created_on.map(|t| DateTimeWrapper(naive_local_to_utc(t))),
+                .map(|t| DateTimeWrapper(datetime_to_utc(t))),
+            created_on: m.created_on.map(|t| DateTimeWrapper(datetime_to_utc(t))),
             updated_on: DateTimeWrapper(crate::util::timestamp_to_utc(m.updated_on)),
         }
     }

@@ -737,7 +737,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00b9f7252833d5ed4b00aa9604b563529dd5e11de9c23615de2dcdf91eb87b52"
 dependencies = [
  "async-compression",
- "chrono",
  "crc32fast",
  "futures-lite",
  "pin-project",
@@ -2172,7 +2171,6 @@ version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea6be833b323a56361118a747470a45a1bcd5c52a2ec9b1e40c83dafe687e453"
 dependencies = [
- "chrono",
  "deunicode",
  "dummy",
  "either",
@@ -7928,7 +7926,6 @@ dependencies = [
  "bcrypt",
  "bytes",
  "chacha20poly1305",
- "chrono",
  "config",
  "dashmap",
  "dotenvy",
@@ -7944,6 +7941,7 @@ dependencies = [
  "insta",
  "ipnet",
  "itertools 0.15.0",
+ "jiff",
  "jsonschema",
  "jsonwebtoken",
  "libc",

@@ -41,7 +41,9 @@ pub fn password_digest(nonce: &[u8], created: &str, password: &str) -> String {
 pub fn generate_nonce_created() -> (Vec<u8>, String) {
     let mut nonce = [0u8; 16];
     rand::rng().fill_bytes(&mut nonce);
-    let created = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let created = jiff::Timestamp::now()
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
     (nonce.to_vec(), created)
 }
 
@@ -151,7 +153,7 @@ mod tests {
         assert_eq!(nonce.len(), 16);
         assert!(created.ends_with('Z'));
         // Round-trips as an RFC3339/ISO-8601 instant.
-        assert!(chrono::DateTime::parse_from_rfc3339(&created).is_ok());
+        assert!(created.parse::<jiff::Timestamp>().is_ok());
     }
 
     #[test]

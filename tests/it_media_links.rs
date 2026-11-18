@@ -47,7 +47,7 @@ async fn an_expired_signature_is_unauthorized() {
     let st = sign_until(
         MediaResource::Monitor(1),
         7,
-        chrono::Utc::now().timestamp() - 1,
+        zm_api::util::time::unix_now() - 1,
     );
     let path = format!(
         "/api/v3/live/1/hls/init.mp4?st={}",

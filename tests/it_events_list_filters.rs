@@ -348,7 +348,7 @@ async fn hourly_counts_can_be_for_one_monitor() {
     let _ma = RowGuard::monitor(a.id);
     let b = insert_monitor(&app.db, "HistB").await.expect("monitor b");
     let _mb = RowGuard::monitor(b.id);
-    let now = chrono::Utc::now().naive_utc();
+    let now = zm_api::util::time::db_utc_now();
     let mut guards = Vec::new();
     for (mid, n) in [(a.id, 2), (b.id, 3)] {
         for _ in 0..n {
@@ -408,12 +408,8 @@ async fn the_event_audit_finds_gaps_and_missing_or_empty_media() {
     let _m = RowGuard::monitor(monitor.id);
 
     // Stored as ZoneMinder stores them: server-local wall-clock.
-    let base = chrono::NaiveDate::from_ymd_opt(2026, 10, 1)
-        .unwrap()
-        .and_hms_opt(10, 0, 0)
-        .unwrap()
-        .and_utc();
-    let at = |s: i64| zm_api::util::utc_to_naive_local(base + chrono::Duration::seconds(s));
+    let base: jiff::Timestamp = "2026-10-01T10:00:00Z".parse().unwrap();
+    let at = |s: i64| zm_api::util::utc_to_datetime(base + jiff::SignedDuration::from_secs(s));
     // (start, end, video bytes): 0 = empty file, None = no file.
     let specs = [(0, 60, Some(5)), (90, 120, Some(0)), (110, 200, None)];
     let mut ids = Vec::new();
@@ -506,15 +502,14 @@ async fn time_filters_round_trip_an_events_reported_start() {
     let token = superuser_token();
     let monitor = insert_monitor(&app.db, "TzRound").await.expect("monitor");
     let _m = RowGuard::monitor(monitor.id);
-    let start_utc =
-        chrono::DateTime::from_timestamp(chrono::Utc::now().timestamp() - 600, 0).unwrap();
+    let start_utc = jiff::Timestamp::from_second(zm_api::util::time::unix_now() - 600).unwrap();
     let e = zm_api::entity::events::ActiveModel {
         monitor_id: Set(monitor.id),
         state_id: Set(1),
         name: Set(unique_name("TzRound")),
-        start_date_time: Set(Some(zm_api::util::utc_to_naive_local(start_utc))),
-        end_date_time: Set(Some(zm_api::util::utc_to_naive_local(
-            start_utc + chrono::Duration::seconds(30),
+        start_date_time: Set(Some(zm_api::util::utc_to_datetime(start_utc))),
+        end_date_time: Set(Some(zm_api::util::utc_to_datetime(
+            start_utc + jiff::SignedDuration::from_secs(30),
         ))),
         ..Default::default()
     }
@@ -528,10 +523,10 @@ async fn time_filters_round_trip_an_events_reported_start() {
         .await
         .json();
     let reported = reported["start_date_time"].as_str().unwrap().to_string();
-    let at = chrono::DateTime::parse_from_rfc3339(&reported).unwrap();
+    let at: jiff::Timestamp = reported.parse().unwrap();
     assert_eq!(
-        at.timestamp(),
-        start_utc.timestamp(),
+        at.as_second(),
+        start_utc.as_second(),
         "reported as UTC: {reported}"
     );
 
@@ -558,7 +553,7 @@ async fn time_filters_round_trip_an_events_reported_start() {
         }
     };
     assert_eq!(ids(reported.clone()).await, vec![e.id]);
-    let later = (at + chrono::Duration::seconds(1)).to_rfc3339();
+    let later = zm_api::util::time::rfc3339_offset(at + jiff::SignedDuration::from_secs(1));
     assert!(ids(later).await.is_empty());
 }
 
@@ -612,7 +607,7 @@ async fn counts_by_monitor_filters_archived_events() {
             monitor_id: Set(monitor.id),
             state_id: Set(1),
             name: Set(unique_name("EvCountArch")),
-            start_date_time: Set(Some(chrono::Utc::now().naive_utc())),
+            start_date_time: Set(Some(zm_api::util::time::db_utc_now())),
             length: Set(Decimal::new(1, 0)),
             archived: Set(archived),
             ..Default::default()

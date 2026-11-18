@@ -33,7 +33,7 @@ pub async fn create(
         name: Set(req.name.clone()),
         description: Set(req.description.clone()),
         created_by: Set(req.created_by),
-        created_on: Set(req.created_on),
+        created_on: Set(req.created_on.map(crate::util::time::db_datetime)),
     };
     Ok(am.insert(db).await?)
 }
@@ -58,7 +58,7 @@ pub async fn update(
         am.created_by = Set(Some(v));
     }
     if let Some(v) = req.created_on {
-        am.created_on = Set(Some(v));
+        am.created_on = Set(Some(crate::util::time::db_datetime(v)));
     }
 
     let updated = am.update(db).await?;

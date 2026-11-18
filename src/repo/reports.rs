@@ -2,7 +2,7 @@ use crate::dto::request::reports::{CreateReportRequest, UpdateReportRequest};
 use crate::dto::PaginationParams;
 use crate::entity::reports::{ActiveModel, Entity as Reports, Model as ReportModel};
 use crate::error::{AppError, AppResult};
-use chrono::NaiveDateTime;
+use jiff::civil::DateTime as Civil;
 use sea_orm::*;
 
 pub async fn find_all(db: &DatabaseConnection) -> AppResult<Vec<ReportModel>> {
@@ -33,20 +33,14 @@ pub async fn create(
     let start_date_time = req
         .start_date_time
         .as_ref()
-        .map(|s| {
-            NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%SZ")
-                .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
-        })
+        .map(|s| parse_report_time(s))
         .transpose()
         .map_err(|e| AppError::BadRequestError(format!("Invalid start_date_time format: {}", e)))?;
 
     let end_date_time = req
         .end_date_time
         .as_ref()
-        .map(|s| {
-            NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%SZ")
-                .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
-        })
+        .map(|s| parse_report_time(s))
         .transpose()
         .map_err(|e| AppError::BadRequestError(format!("Invalid end_date_time format: {}", e)))?;
 
@@ -85,20 +79,16 @@ pub async fn update(
     }
 
     if let Some(s) = &req.start_date_time {
-        let dt = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%SZ")
-            .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
-            .map_err(|e| {
-                AppError::BadRequestError(format!("Invalid start_date_time format: {}", e))
-            })?;
+        let dt = parse_report_time(s).map_err(|e| {
+            AppError::BadRequestError(format!("Invalid start_date_time format: {}", e))
+        })?;
         am.start_date_time = Set(Some(dt));
     }
 
     if let Some(s) = &req.end_date_time {
-        let dt = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%SZ")
-            .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
-            .map_err(|e| {
-                AppError::BadRequestError(format!("Invalid end_date_time format: {}", e))
-            })?;
+        let dt = parse_report_time(s).map_err(|e| {
+            AppError::BadRequestError(format!("Invalid end_date_time format: {}", e))
+        })?;
         am.end_date_time = Set(Some(dt));
     }
 
@@ -109,4 +99,12 @@ pub async fn update(
 pub async fn delete_by_id(db: &DatabaseConnection, id: u32) -> AppResult<bool> {
     let res = Reports::delete_by_id(id).exec(db).await?;
     Ok(res.rows_affected > 0)
+}
+
+/// A report bound as the client sends it: `2026-01-02T03:04:05Z` or
+/// `2026-01-02 03:04:05`. Either way the digits go to the column unchanged.
+fn parse_report_time(s: &str) -> Result<sea_orm::prelude::DateTime, jiff::Error> {
+    Civil::strptime("%Y-%m-%dT%H:%M:%SZ", s)
+        .or_else(|_| Civil::strptime("%Y-%m-%d %H:%M:%S", s))
+        .map(crate::util::time::db_datetime)
 }

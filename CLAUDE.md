@@ -22,6 +22,7 @@ Keep it practical: commands that work, where code lives, and project-specific co
 - Keep CI green: `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-features` must pass.
 - Don’t commit secrets. Local profiles like `settings/dev.toml` are intentionally gitignored.
 - Treat `src/entity/` and SeaORM active enums as generated artifacts unless you are intentionally regenerating them.
+- Dates and times use `jiff`. `chrono` is not a direct dependency: SeaORM's `DateTime` and `DateTimeUtc` are chrono types, so convert them with `src/util/time.rs` as a value leaves an entity or enters a query, and don't call chrono methods on them anywhere else.
 - If you need to change DB schema expectations, update migrations/tests/scripts accordingly (they’re tightly coupled).
 
 ## Development Workflow (TDD)

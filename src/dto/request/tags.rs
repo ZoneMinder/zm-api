@@ -1,5 +1,5 @@
 use garde::Validate;
-use sea_orm::prelude::DateTimeUtc;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -9,7 +9,7 @@ pub struct CreateTagRequest {
     pub name: String,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00Z")]
     #[garde(skip)]
-    pub create_date: Option<DateTimeUtc>,
+    pub create_date: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema, Validate)]
@@ -18,7 +18,7 @@ pub struct UpdateTagRequest {
     pub name: Option<String>,
     #[schema(value_type = Option<String>, example = "2025-01-15T10:30:00Z")]
     #[garde(skip)]
-    pub create_date: Option<DateTimeUtc>,
+    pub create_date: Option<Timestamp>,
 }
 
 /// Query params for tag detail with paginated events

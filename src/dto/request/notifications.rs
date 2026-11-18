@@ -1,8 +1,8 @@
 //! Requests for ZoneMinder 1.39's Notifications, push token registrations
 //! (#175).
 
-use chrono::{DateTime, Utc};
 use garde::Validate;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -104,7 +104,7 @@ pub struct CreateNotificationRequest {
     /// RFC 3339.
     #[schema(value_type = Option<String>, format = DateTime)]
     #[garde(skip)]
-    pub last_notified_at: Option<DateTime<Utc>>,
+    pub last_notified_at: Option<Timestamp>,
     /// The owner. Only a System editor may set it; otherwise it is the caller.
     #[garde(skip)]
     pub user_id: Option<u32>,
@@ -138,7 +138,7 @@ pub struct UpdateNotificationRequest {
     #[serde(default, deserialize_with = "crate::dto::serde_helpers::double_option")]
     #[schema(value_type = Option<String>, format = DateTime)]
     #[garde(skip)]
-    pub last_notified_at: Option<Option<DateTime<Utc>>>,
+    pub last_notified_at: Option<Option<Timestamp>>,
     /// System editors only.
     #[garde(skip)]
     pub user_id: Option<u32>,

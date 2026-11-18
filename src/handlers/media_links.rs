@@ -35,7 +35,7 @@ fn link(
         .ttl_seconds
         .map(Duration::from_secs)
         .unwrap_or(LINK_DEFAULT_TTL);
-    let expires_at = chrono::Utc::now().timestamp() + ttl.as_secs() as i64;
+    let expires_at = crate::util::time::unix_now() + ttl.as_secs() as i64;
     let token = media_url::sign_until(resource, uid, expires_at);
     Ok(MediaLinkResponse {
         playlist_url: format!(

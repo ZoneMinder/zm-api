@@ -124,12 +124,11 @@ fn scalar_one(v: &serde_json::Value, kind: ValueKind) -> AppResult<sea_orm::Valu
             let s = v
                 .as_str()
                 .ok_or_else(|| bad("expected an ISO-8601 datetime string"))?;
-            let dt = chrono::DateTime::parse_from_rfc3339(s)
+            let dt = s
+                .parse::<jiff::Timestamp>()
                 .map_err(|_| bad("invalid datetime; expected ISO-8601 / RFC-3339"))?;
             // Event date columns are server-local wall-clock time (#173).
-            sea_orm::Value::from(crate::util::utc_to_naive_local(
-                dt.with_timezone(&chrono::Utc),
-            ))
+            sea_orm::Value::from(crate::util::utc_to_datetime(dt))
         }
         ValueKind::Bool => {
             let b = match v {

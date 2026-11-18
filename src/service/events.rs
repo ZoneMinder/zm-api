@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use sea_orm::ActiveValue::Set;
 use tracing::instrument;
 
@@ -50,11 +50,11 @@ pub async fn list(
         start_time: params
             .start_time
             .as_ref()
-            .map(|dt| crate::util::utc_to_naive_local(dt.0)),
+            .map(|dt| crate::util::utc_to_datetime(dt.0)),
         end_time: params
             .end_time
             .as_ref()
-            .map(|dt| crate::util::utc_to_naive_local(dt.0)),
+            .map(|dt| crate::util::utc_to_datetime(dt.0)),
         sort_field: params.sort.unwrap_or_default(),
         sort_direction: params.direction.unwrap_or_default(),
         alarm_frames_min: params.alarm_frames_min,
@@ -152,8 +152,8 @@ pub async fn list_by_monitor(
     monitor_id: u32,
     page: Option<u64>,
     page_size: Option<u64>,
-    start_time: Option<DateTime<Utc>>,
-    end_time: Option<DateTime<Utc>>,
+    start_time: Option<Timestamp>,
+    end_time: Option<Timestamp>,
     scope: &MonitorScope,
 ) -> AppResult<PaginatedEventsResponse> {
     use crate::dto::wrappers::DateTimeWrapper;
@@ -245,10 +245,10 @@ pub async fn create(
         cause: Set(event.cause),
         start_date_time: Set(event
             .start_date_time
-            .map(|dt| crate::util::utc_to_naive_local(dt.0))),
+            .map(|dt| crate::util::utc_to_datetime(dt.0))),
         end_date_time: Set(event
             .end_date_time
-            .map(|dt| crate::util::utc_to_naive_local(dt.0))),
+            .map(|dt| crate::util::utc_to_datetime(dt.0))),
         width: Set(event.width),
         height: Set(event.height),
         length: Set(event.length.0),
@@ -425,7 +425,7 @@ pub async fn get_event_counts_by_monitor(
 mod tests {
     use super::*;
     use crate::entity::events::Model as EventModel;
-    use chrono::DateTime;
+    use crate::util::time;
     use rust_decimal::Decimal;
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
 
@@ -438,7 +438,7 @@ mod tests {
             secondary_storage_id: None,
             name: name.into(),
             cause: None,
-            start_date_time: DateTime::from_timestamp(1_700_000_000, 0).map(|dt| dt.naive_utc()),
+            start_date_time: Some(time::db_datetime("2023-11-14T22:13:20".parse().unwrap())),
             end_date_time: None,
             width: 1920,
             height: 1080,

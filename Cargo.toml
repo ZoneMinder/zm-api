@@ -68,12 +68,12 @@ rustls-acme = { version = "0.15", features = ["axum", "tokio", "tower"] }
 base64 = "0.23"
 chacha20poly1305 = { version = "0.11", features = ["alloc"] }
 bcrypt = "0.19"
-chrono = "0.4"
+jiff = { version = "0.2", features = ["serde"] }
 # Resolve the host OS IANA timezone name for GET /system/locale (#33).
 iana-time-zone = "0.1"
 config = "0.15"
 dotenvy = "0.15"
-fake = { version = "5", features = ["derive", "uuid", "chrono"] }
+fake = { version = "5", features = ["derive", "uuid"] }
 futures = "0.3"
 futures-util = "0.3"
 # Not "full": that would pull phone-number (RUSTSEC-flagged quick-xml 0.38 via
@@ -163,7 +163,7 @@ ipnet = "2.12"
 
 # Low-level libc bindings for PR_SET_PDEATHSIG
 libc = "0.2"
-async_zip = { version = "0.0.17", features = ["tokio", "deflate", "chrono"] }
+async_zip = { version = "0.0.17", features = ["tokio", "deflate"] }
 
 [dependencies.sea-orm]
 version = "2"

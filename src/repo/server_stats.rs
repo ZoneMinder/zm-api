@@ -2,7 +2,7 @@ use crate::dto::request::server_stats::CreateServerStatRequest;
 use crate::dto::PaginationParams;
 use crate::entity::server_stats::{ActiveModel, Entity as ServerStats, Model as ServerStatModel};
 use crate::error::{AppError, AppResult};
-use chrono::Utc;
+use jiff::Timestamp;
 use rust_decimal::Decimal;
 use sea_orm::*;
 use std::str::FromStr;
@@ -76,7 +76,7 @@ pub async fn create(
     let am = ActiveModel {
         id: Default::default(),
         server_id: Set(req.server_id),
-        time_stamp: Set(crate::util::utc_to_timestamp(Utc::now())),
+        time_stamp: Set(crate::util::utc_to_timestamp(Timestamp::now())),
         cpu_load: Set(cpu_load),
         cpu_user_percent: Set(cpu_user_percent),
         cpu_nice_percent: Set(cpu_nice_percent),

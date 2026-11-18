@@ -40,7 +40,7 @@ pub async fn login(state: &AppState, req: LoginRequest) -> AppResult<TokenRespon
         .floor(user.id)
         .unwrap_or(0)
         .max(user.token_min_expiry as i64);
-    let iat = issue_time(chrono::Utc::now().timestamp(), floor);
+    let iat = issue_time(crate::util::time::unix_now(), floor);
     let resp = token::generate_tokens_issued_at(iat, user.username, user.id, perms)?;
     Ok(resp)
 }
@@ -107,7 +107,7 @@ pub async fn refresh_token(state: &AppState, req: RefreshTokenRequest) -> AppRes
 pub async fn logout(state: &AppState, uid: u32) -> AppResult<()> {
     // Floor at now+1 so tokens minted earlier in the *current* second (e.g.
     // the one authenticating this very logout) are revoked too.
-    let floor = chrono::Utc::now().timestamp() + 1;
+    let floor = crate::util::time::unix_now() + 1;
     user::set_token_min_expiry(&state.db, uid, floor as u64).await?;
     state.revocations.revoke(uid, floor);
     info!("Revoked all tokens for user id {uid} issued before {floor}");
@@ -186,7 +186,7 @@ mod tests {
         let state = AppState::for_test_with_db(db);
         // As logout and a role change do: the floor is the next second. The
         // password check may run into that second; the token works either way.
-        let before = chrono::Utc::now().timestamp();
+        let before = crate::util::time::unix_now();
         state.revocations.revoke(1, before + 1);
 
         let resp = login(
@@ -385,7 +385,7 @@ mod tests {
     #[tokio::test]
     async fn test_refresh_rejected_when_issued_before_token_min_expiry() {
         let mut user_row = mk_user("dave", "irrelevant-hash");
-        user_row.token_min_expiry = (chrono::Utc::now().timestamp() + 10_000) as u64;
+        user_row.token_min_expiry = (crate::util::time::unix_now() + 10_000) as u64;
         let db = MockDatabase::new(DatabaseBackend::MySql)
             .append_query_results::<crate::entity::users::Model, _, _>(vec![vec![user_row]])
             .into_connection();
@@ -452,7 +452,7 @@ mod tests {
             token::generate_tokens("dave".to_string(), 1, UserPermissions::default()).unwrap();
         state
             .revocations
-            .revoke(1, chrono::Utc::now().timestamp() + 10_000);
+            .revoke(1, crate::util::time::unix_now() + 10_000);
         let err = refresh_token(
             &state,
             RefreshTokenRequest {

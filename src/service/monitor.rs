@@ -957,7 +957,7 @@ pub async fn audio_level(
     let monitor = repo::monitors::find_by_id(state.db(), id)
         .await?
         .ok_or_else(|| monitor_not_found(id))?;
-    let until = (chrono::Utc::now().timestamp() + 10) as u32;
+    let until = (crate::util::time::unix_now() + 10) as u32;
     let live = tokio::task::spawn_blocking(move || {
         crate::zm_shm::MonitorShm::connect(id)
             .ok()

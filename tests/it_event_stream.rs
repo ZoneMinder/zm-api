@@ -51,7 +51,7 @@ async fn an_event_starts_ends_and_gets_notes() {
 
     let monitor = insert_monitor(&db, "EvStreamMon").await.expect("monitor");
     let _m = RowGuard::monitor(monitor.id);
-    let now = chrono::Utc::now().naive_utc();
+    let now = zm_api::util::time::db_utc_now();
     let event = zm_api::entity::events::ActiveModel {
         monitor_id: Set(monitor.id),
         state_id: Set(1),

@@ -15,7 +15,7 @@ pub fn generate_tokens(
     user_id: u32,
     perms: UserPermissions,
 ) -> AppResult<TokenResponse> {
-    generate_tokens_issued_at(chrono::Utc::now().timestamp(), username, user_id, perms)
+    generate_tokens_issued_at(crate::util::time::unix_now(), username, user_id, perms)
 }
 
 /// [`generate_tokens`] with the issue time given. See
