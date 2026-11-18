@@ -221,6 +221,16 @@ impl MiddlewareConfig {
     }
 }
 
+impl ServerConfig {
+    /// Whether the listener speaks TLS, from a certificate file or ACME. A
+    /// `[server.tls]` or `[server.acme]` section that is present but not
+    /// enabled, as the packaged settings have, does not count.
+    pub fn serves_tls(&self) -> bool {
+        self.tls.as_ref().is_some_and(|tls| tls.enabled)
+            || self.acme.as_ref().is_some_and(|acme| acme.enabled)
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct ServerTlsConfig {
     #[serde(default)]
@@ -321,6 +331,31 @@ pub mod tests {
             public_prefix: String::new(),
         };
         assert_eq!(config.get_http_addr(), "http://127.0.0.1:1024");
+    }
+
+    /// The packaged settings carry a `[server.tls]` section with
+    /// `enabled = false`. A listener on plain HTTP must not be taken for TLS:
+    /// a multi-server peer would be given an `https://` address it can't answer.
+    #[test]
+    fn a_tls_section_that_is_switched_off_is_not_tls() {
+        let mut config = ServerConfig {
+            addr: "127.0.0.1".to_string(),
+            port: 8080,
+            tls: None,
+            acme: None,
+            allowed_origins: Vec::new(),
+            middleware: MiddlewareConfig::default(),
+            public_prefix: String::new(),
+        };
+        assert!(!config.serves_tls());
+        config.tls = Some(ServerTlsConfig {
+            enabled: false,
+            cert_path: Some("/etc/ssl/cert.pem".into()),
+            key_path: Some("/etc/ssl/key.pem".into()),
+        });
+        assert!(!config.serves_tls());
+        config.tls.as_mut().unwrap().enabled = true;
+        assert!(config.serves_tls());
     }
 
     #[test]

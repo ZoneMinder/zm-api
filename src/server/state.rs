@@ -332,7 +332,7 @@ impl AppState {
             this_server.zoneminder_id,
             &config.cluster,
             config.server.port,
-            config.server.tls.is_some() || config.server.acme.is_some(),
+            config.server.serves_tls(),
         ));
         // Another server may have handled a logout: follow the floors it wrote.
         if cluster.relays() {
