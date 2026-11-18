@@ -25,7 +25,7 @@ jobs:
     name: Version consistency
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./scripts/check-version-consistency.sh
 
   # Debian/Ubuntu/Raspberry Pi OS — the flagship, built natively per arch.
@@ -39,7 +39,7 @@ jobs:
           - { arch: arm64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install FFmpeg/OpenSSL dev libraries
         run: |
@@ -84,7 +84,7 @@ jobs:
           fi
           dpkg-deb -c "$deb"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: deb-${{ matrix.arch }}
           path: target/debian/*.deb
@@ -123,7 +123,7 @@ jobs:
             'pkgconfig(libavdevice)' 'pkgconfig(libswscale)' \
             'pkgconfig(libswresample)'
 
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Mark workspace as a safe git directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -137,7 +137,7 @@ jobs:
           find "$(rpm --eval %_topdir)/RPMS" -name '*.rpm' -exec cp {} out/ \;
           ls -l out
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rpm-${{ matrix.distro }}
           path: out/*.rpm
@@ -153,7 +153,7 @@ jobs:
       - name: Install build dependencies
         run: pacman -Syu --noconfirm base-devel git rust ffmpeg openssl clang
 
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build package
         run: |
@@ -177,7 +177,7 @@ jobs:
           mkdir -p out && cp /tmp/build/*.pkg.tar.zst out/
           ls -l out
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: arch-pkg
           path: out/*.pkg.tar.zst
@@ -192,7 +192,7 @@ jobs:
     name: OpenAPI spec
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install FFmpeg/OpenSSL dev libraries
         run: |
@@ -227,7 +227,7 @@ jobs:
           sys.exit(0 if paths > 50 else 'suspiciously few paths')
           "
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: openapi
           path: openapi.json
@@ -253,9 +253,9 @@ jobs:
           - { distro: arch, arch: amd64, runner: ubuntu-24.04, artifact: arch-pkg }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ matrix.artifact }}
           path: pkg
@@ -265,7 +265,7 @@ jobs:
 
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: packaging-logs-${{ matrix.artifact }}
           path: target/e2e/${{ matrix.distro }}/logs
@@ -274,7 +274,7 @@ jobs:
       - name: Mark the package verified
         run: echo "${{ matrix.artifact }} passed its install test at ${{ github.sha }}" > verified.txt
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: verified-${{ matrix.artifact }}
           path: verified.txt
@@ -288,7 +288,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # One directory per artifact, so a package can be matched to its marker.
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: downloaded
 
@@ -327,7 +327,7 @@ jobs:
       # The hand-written entry for this version, if CHANGELOG.md has one. Falls
       # back to GitHub's generated commit list, which is better than nothing but
       # says little to someone deciding whether to upgrade.
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { path: src }
 
       - name: Extract release notes
@@ -345,7 +345,7 @@ jobs:
           fi
 
       # Pinned to the commit: this step holds a token that can write releases.
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           files: artifacts/**
           fail_on_unmatched_files: false
