@@ -175,6 +175,10 @@ impl AppState {
         // own daemons do it, from zm.conf and the Servers table.
         let this_server = crate::daemon::server_id::resolve_this_server(db.as_ref()).await;
         let server_id = this_server.id;
+        // Which server's storage this host can read. The widest answer, so a
+        // host that only matched by hostname still leaves other servers'
+        // files alone.
+        let storage_server = this_server.id.or(this_server.zoneminder_id);
         // On a multi-server host zmdc.pl listens on zmdc<ZM_SERVER_ID>.sock
         // (#229). A socket name set in the config is left alone.
         if config.daemon.socket_name == "zmdc.sock" {
@@ -205,10 +209,13 @@ impl AppState {
                 );
             }
             if m.audit.enabled {
-                Arc::new(crate::service::maintenance::audit::AuditService::new(
-                    db.clone(),
-                    m.audit.clone(),
-                ))
+                Arc::new(
+                    crate::service::maintenance::audit::AuditService::new(
+                        db.clone(),
+                        m.audit.clone(),
+                    )
+                    .with_server_id(storage_server),
+                )
                 .spawn();
                 tracing::info!(
                     "audit maintenance enabled (every {}s, min_age {}s, dry_run {}) \
@@ -239,10 +246,13 @@ impl AppState {
         // free-space floor / age / quota so the disk can't silently fill. Off
         // by default; never stored on AppState (no handlers need it).
         if config.retention.enabled {
-            let svc = Arc::new(crate::service::retention::RetentionService::new(
-                db.clone(),
-                config.retention.clone(),
-            ));
+            let svc = Arc::new(
+                crate::service::retention::RetentionService::new(
+                    db.clone(),
+                    config.retention.clone(),
+                )
+                .with_server_id(storage_server),
+            );
             Arc::clone(&svc).spawn();
             tracing::info!(
                 "event retention enabled (every {}s, min_free {}%, max_age {}d, max_bytes {}, dry_run {})",

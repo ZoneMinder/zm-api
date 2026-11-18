@@ -30,6 +30,9 @@ pub struct Export {
     event: EventModel,
     response: EventResponse,
     dir: PathBuf,
+    /// The server that holds the event's files, when that is not this one.
+    /// The export lists no files for it: it can't read them.
+    files_on: Option<u32>,
 }
 
 /// Which part an event-directory file belongs to.
@@ -67,6 +70,16 @@ pub async fn prepare(
             return Err(not_found());
         }
         let dir = crate::service::event_storage::event_directory(state, &event).await?;
+        let files_on = match state.cluster.event_storage_owner(state.db(), id).await? {
+            crate::cluster::Owner::Peer(server) => {
+                warn!(
+                    "event {id} export: its files are on server {server}; \
+                     exporting its details only"
+                );
+                Some(server)
+            }
+            crate::cluster::Owner::Here => None,
+        };
         let summaries = tags
             .iter()
             .map(crate::dto::response::events_tags::TagSummary::from)
@@ -77,6 +90,7 @@ pub async fn prepare(
             event,
             response,
             dir,
+            files_on,
         });
     }
     Ok(out)
@@ -126,6 +140,20 @@ async fn write_zip<W: AsyncWrite + Unpin>(
         }
         let file_parts = [ExportPart::Images, ExportPart::Video, ExportPart::Misc];
         if !file_parts.iter().any(|p| parts.contains(p)) {
+            continue;
+        }
+        if let Some(server) = ex.files_on {
+            let note = format!(
+                "The files of event {} are on server {server}, which this server can't read. \
+                 Ask that server for them.\n",
+                ex.event.id
+            );
+            let entry = ZipEntryBuilder::new(
+                format!("{folder}/files-unavailable.txt").into(),
+                Compression::Deflate,
+            )
+            .last_modification_date(now);
+            zip.write_entry_whole(entry, note.as_bytes()).await?;
             continue;
         }
         let mut dir = match tokio::fs::read_dir(&ex.dir).await {

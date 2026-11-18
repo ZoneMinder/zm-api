@@ -40,18 +40,32 @@ use crate::handlers::{events_playback, frame_images, synopsis};
 use crate::server::state::AppState;
 use crate::util::middleware::media_auth_middleware;
 
-/// Add event playback routes to the router
-pub fn add_events_playback_routes(router: Router<AppState>) -> Router<AppState> {
+/// Add event playback routes to the router.
+///
+/// Every route that names an event reads its files, so each is relayed to
+/// the server that holds them (multi-server, see `cluster::forward`). The
+/// relay sits inside the media authentication: this server checks who is
+/// asking, and that they may see the monitor, before anything is sent on. The
+/// range montage names no event and spans many, so it stays on this server.
+pub fn add_events_playback_routes(router: Router<AppState>, state: AppState) -> Router<AppState> {
+    let to_storage_owner = || {
+        axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::cluster::forward::forward_to_storage_owner,
+        )
+    };
     router
         // HLS streaming endpoints
         .route(
             "/api/v3/events/{id}/stream/playlist.m3u8",
             get(events_playback::get_event_playlist)
+                .route_layer(to_storage_owner())
                 .route_layer(axum::middleware::from_fn(media_auth_middleware)),
         )
         .route(
             "/api/v3/events/{id}/stream/video.mp4",
             get(events_playback::get_event_stream_video)
+                .route_layer(to_storage_owner())
                 .route_layer(axum::middleware::from_fn(media_auth_middleware)),
         )
         // Range-served media for the in-progress (EVENT) playlist's byte-range
@@ -59,65 +73,76 @@ pub fn add_events_playback_routes(router: Router<AppState>) -> Router<AppState> 
         .route(
             "/api/v3/events/{id}/stream/media.mp4",
             get(events_playback::get_event_stream_media)
+                .route_layer(to_storage_owner())
                 .route_layer(axum::middleware::from_fn(media_auth_middleware)),
         )
         // HLS-VOD init + media segments
         .route(
             "/api/v3/events/{id}/stream/init.mp4",
             get(events_playback::get_event_init)
+                .route_layer(to_storage_owner())
                 .route_layer(axum::middleware::from_fn(media_auth_middleware)),
         )
         .route(
             "/api/v3/events/{id}/stream/segment/{seq}",
             get(events_playback::get_event_segment)
+                .route_layer(to_storage_owner())
                 .route_layer(axum::middleware::from_fn(media_auth_middleware)),
         )
         // Direct video access
         .route(
             "/api/v3/events/{id}/video",
             get(events_playback::get_event_video)
+                .route_layer(to_storage_owner())
                 .route_layer(axum::middleware::from_fn(media_auth_middleware)),
         )
         // Thumbnail
         .route(
             "/api/v3/events/{id}/thumbnail",
             get(events_playback::get_event_thumbnail)
+                .route_layer(to_storage_owner())
                 .route_layer(axum::middleware::from_fn(media_auth_middleware)),
         )
         // One frame of an event as a JPEG (GH #26)
         .route(
             "/api/v3/events/{id}/frames/{fid}/image",
             get(frame_images::get_event_frame_image)
+                .route_layer(to_storage_owner())
                 .route_layer(axum::middleware::from_fn(media_auth_middleware)),
         )
         // Codec / dimensions / duration metadata
         .route(
             "/api/v3/events/{id}/info",
             get(events_playback::get_event_info)
+                .route_layer(to_storage_owner())
                 .route_layer(axum::middleware::from_fn(media_auth_middleware)),
         )
         // Motion synopsis — glanceable composite still (P1).
         .route(
             "/api/v3/events/{id}/synopsis/review",
             get(synopsis::get_event_synopsis_review)
+                .route_layer(to_storage_owner())
                 .route_layer(axum::middleware::from_fn(media_auth_middleware)),
         )
         // Motion synopsis — temporal layout preview (P2).
         .route(
             "/api/v3/events/{id}/synopsis/layout",
             get(synopsis::get_event_synopsis_layout)
+                .route_layer(to_storage_owner())
                 .route_layer(axum::middleware::from_fn(media_auth_middleware)),
         )
         // Motion synopsis — request/poll the rendered mp4 (P3).
         .route(
             "/api/v3/events/{id}/synopsis",
             get(synopsis::get_event_synopsis)
+                .route_layer(to_storage_owner())
                 .route_layer(axum::middleware::from_fn(media_auth_middleware)),
         )
         // Motion synopsis — stream the rendered mp4 (P3).
         .route(
             "/api/v3/events/{id}/synopsis/mp4",
             get(synopsis::get_event_synopsis_mp4)
+                .route_layer(to_storage_owner())
                 .route_layer(axum::middleware::from_fn(media_auth_middleware)),
         )
         // Motion synopsis — range/overview montage across events (P4). The static

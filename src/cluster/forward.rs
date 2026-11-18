@@ -95,30 +95,110 @@ pub async fn forward_to_owner(
         }));
     }
 
+    relay_to_server(
+        &state,
+        server_id,
+        &format!("monitor {monitor_id} belongs to"),
+        &path_and_query,
+        request,
+    )
+    .await
+}
+
+/// The middleware for routes that read or change an event's files. Apply
+/// with `route_layer`, inside the guards, on the routes that touch the
+/// event's directory and on no others: a route that only reads or writes the
+/// event's row is answered here, as any server can.
+///
+/// Files live on one server when their storage area has a `ServerId`, so a
+/// request for them goes there. Shared storage (no `ServerId`) is reachable
+/// from everywhere and is never relayed.
+pub async fn forward_to_storage_owner(
+    State(state): State<AppState>,
+    params: RawPathParams,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    if !state.cluster.relays() {
+        return Ok(next.run(request).await);
+    }
+    let Some(event_id) = path_event_id(&params) else {
+        return Ok(next.run(request).await);
+    };
+    let Some(home) = state.cluster.event_home(state.db(), event_id).await? else {
+        return Ok(next.run(request).await);
+    };
+    let Owner::Peer(server_id) = home.owner else {
+        return Ok(next.run(request).await);
+    };
+
+    // As for a monitor: the caller must be able to see the event's monitor
+    // before anything leaves this server, and the owner checks again.
+    let sight = sight(&request, home.monitor_id);
+    if !caller_sees(&state, sight, home.monitor_id).await? {
+        return Err(AppError::NotFoundError(Resource {
+            details: vec![("id".to_string(), event_id.to_string())],
+            resource_type: ResourceType::Event,
+        }));
+    }
+    let path_and_query = original_path_and_query(&request);
+    relay_to_server(
+        &state,
+        server_id,
+        &format!("the files of event {event_id} are on"),
+        &path_and_query,
+        request,
+    )
+    .await
+}
+
+/// The event a route names: `{id}` on the event routes, `{event_id}` on
+/// the frame routes.
+fn path_event_id(params: &RawPathParams) -> Option<u64> {
+    params
+        .iter()
+        .find(|(name, _)| *name == "event_id" || *name == "id")
+        .and_then(|(_, value)| value.parse().ok())
+}
+
+/// The steps both relays share once the owner is known: refuse a request
+/// another server already relayed, one for a server with no address, and a
+/// WebSocket; send anything else on. `what` finishes with "belongs to" or
+/// "are on", and reads as the start of every refusal.
+async fn relay_to_server(
+    state: &AppState,
+    server_id: u32,
+    what: &str,
+    path_and_query: &str,
+    request: Request,
+) -> Result<Response, AppError> {
     let peer = state.cluster.peer(state.db(), server_id).await?;
     if let Some(by) = request.headers().get(&FORWARDED_BY) {
         return Err(AppError::MisdirectedError(format!(
-            "monitor {monitor_id} belongs to server {server_id}, and server {} already relayed \
-             this request here; the servers disagree about which one this is",
+            "{what} server {server_id}, and server {} already relayed this request here; the \
+             servers disagree about which one this is",
             by.to_str().unwrap_or("?")
         )));
     }
     let Some(peer) = peer else {
         return Err(AppError::MisdirectedError(format!(
-            "monitor {monitor_id} belongs to server {server_id}, which has no address: give its \
-             Servers row a hostname, or set cluster.peers.{server_id}"
+            "{what} server {server_id}, which has no address: give its Servers row a hostname, \
+             or set cluster.peers.{server_id}"
         )));
     };
     if request.headers().contains_key(header::UPGRADE) {
         return Err(AppError::MisdirectedError(format!(
-            "monitor {monitor_id} belongs to {}; a WebSocket is not relayed, so connect to {} \
-             or use WHEP",
+            "{what} {}; a WebSocket is not relayed, so connect to {} or use WHEP",
             peer.label(),
             peer.base_url
         )));
     }
-    debug!("relaying monitor {monitor_id} request to {}", peer.label());
-    relay(&state, &peer, &path_and_query, request).await
+    debug!(
+        "relaying request ({what} {}) to {}",
+        server_id,
+        peer.label()
+    );
+    relay(state, &peer, path_and_query, request).await
 }
 
 /// The path and query the client sent. A nested router strips its prefix

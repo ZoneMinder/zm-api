@@ -16,11 +16,11 @@
 
 pub mod forward;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use sea_orm::DatabaseConnection;
+use sea_orm::{DatabaseConnection, EntityTrait};
 
 use crate::configure::cluster::ClusterConfig;
 use crate::error::AppResult;
@@ -50,6 +50,61 @@ pub fn owner(this_server: Option<u32>, monitor_server: Option<u32>) -> Owner {
         (Some(here), Some(there)) if here == there => Owner::Here,
         (Some(_), Some(there)) => Owner::Peer(there),
     }
+}
+
+/// Which server can read and delete the files on a storage area.
+///
+/// ZoneMinder's rule: a `Storage.ServerId` of NULL or 0 means shared storage
+/// (NFS, say) that every server reaches. Any other value is local to that
+/// server, and the others can neither read nor delete its files. A host with
+/// no server id is a single-server install, where everything is local.
+pub fn storage_owner(this_server: Option<u32>, storage_server: Option<u32>) -> Owner {
+    owner(this_server, storage_server)
+}
+
+/// Where an event's files are, and which monitor it belongs to (so a caller's
+/// right to see the monitor can be checked before anything is relayed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EventHome {
+    pub monitor_id: u32,
+    pub owner: Owner,
+}
+
+/// Remembers which storage areas a background job has already said it skips,
+/// so a pass that repeats every few minutes logs it once.
+#[derive(Debug, Default)]
+pub struct SkipLog(Mutex<HashSet<u16>>);
+
+impl SkipLog {
+    fn first_time(&self, storage_id: u16) -> bool {
+        self.0.lock().unwrap().insert(storage_id)
+    }
+}
+
+/// Whether a background job must leave `storage` alone because another
+/// server holds its files. Says so once, at info level.
+///
+/// Such a job can't see the files, so every event on the storage would look
+/// as if its media were gone, and the free space it measured would belong to
+/// the wrong disk. The right answer is to touch neither the files nor the
+/// rows: the owning server's own job covers them.
+pub fn skips_peer_storage(
+    log: &SkipLog,
+    job: &str,
+    this_server: Option<u32>,
+    storage: &crate::entity::storage::Model,
+) -> bool {
+    let Owner::Peer(server) = storage_owner(this_server, storage.server_id) else {
+        return false;
+    };
+    if log.first_time(storage.id) {
+        tracing::info!(
+            "{job}: storage {} ({}) belongs to server {server}; leaving it to that server",
+            storage.id,
+            storage.path
+        );
+    }
+    true
 }
 
 /// Another server's zm-api.
@@ -87,6 +142,14 @@ pub struct Cluster {
     client: reqwest::Client,
     servers: Cached<Arc<HashMap<u32, ServerRow>>>,
     owners: Mutex<HashMap<u32, (Instant, Option<u32>)>>,
+    /// An event's monitor and its storage's `ServerId`, by event id.
+    events: Mutex<HashMap<u64, (Instant, EventPlace)>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EventPlace {
+    monitor_id: u32,
+    storage_server: Option<u32>,
 }
 
 impl std::fmt::Debug for Cluster {
@@ -110,6 +173,7 @@ impl Cluster {
             client: build_client(config),
             servers: Mutex::new(None),
             owners: Mutex::new(HashMap::new()),
+            events: Mutex::new(HashMap::new()),
         }
     }
 
@@ -162,6 +226,76 @@ impl Cluster {
             }
         };
         Ok(owner(self.this_server, monitor_server))
+    }
+
+    /// Which server holds a storage area's files, for a `Storage.ServerId`.
+    /// Unlike the relay, this does not depend on `cluster.enabled`: a server
+    /// can't read another's files whatever the setting.
+    pub fn owner_of_storage(&self, storage_server: Option<u32>) -> Owner {
+        storage_owner(self.this_server, storage_server)
+    }
+
+    /// An event's monitor and the server that holds its files. `None` for an
+    /// event that doesn't exist, so the local handler answers 404 as it
+    /// always did. An event with no storage id (or the default-storage 0),
+    /// or whose storage row is missing, is handled here.
+    pub async fn event_home(
+        &self,
+        db: &DatabaseConnection,
+        event_id: u64,
+    ) -> AppResult<Option<EventHome>> {
+        let cached = self
+            .events
+            .lock()
+            .unwrap()
+            .get(&event_id)
+            .filter(|(at, _)| at.elapsed() < CACHE_TTL)
+            .map(|(_, place)| *place);
+        let place = match cached {
+            Some(place) => place,
+            None => {
+                let Some(event) = crate::entity::events::Entity::find_by_id(event_id)
+                    .one(db)
+                    .await?
+                else {
+                    return Ok(None);
+                };
+                let storage_server = match event.storage_id.filter(|id| *id != 0) {
+                    Some(id) => crate::repo::storage::find_by_id(db, id)
+                        .await?
+                        .and_then(|s| s.server_id),
+                    None => None,
+                };
+                let place = EventPlace {
+                    monitor_id: event.monitor_id,
+                    storage_server,
+                };
+                let mut events = self.events.lock().unwrap();
+                events.retain(|_, (at, _)| at.elapsed() < CACHE_TTL);
+                events.insert(event_id, (Instant::now(), place));
+                place
+            }
+        };
+        Ok(Some(EventHome {
+            monitor_id: place.monitor_id,
+            owner: storage_owner(self.this_server, place.storage_server),
+        }))
+    }
+
+    /// The server that holds an event's files, when requests can be relayed
+    /// at all. `Here` otherwise, and for an event that doesn't exist.
+    pub async fn event_storage_owner(
+        &self,
+        db: &DatabaseConnection,
+        event_id: u64,
+    ) -> AppResult<Owner> {
+        if !self.relays() {
+            return Ok(Owner::Here);
+        }
+        Ok(self
+            .event_home(db, event_id)
+            .await?
+            .map_or(Owner::Here, |home| home.owner))
     }
 
     /// Drop what is remembered about a monitor, after its row changed here.
@@ -298,6 +432,53 @@ mod tests {
     fn a_monitor_with_no_server_is_handled_where_the_request_landed() {
         assert_eq!(owner(Some(1), None), Owner::Here);
         assert_eq!(owner(Some(1), Some(0)), Owner::Here);
+    }
+
+    #[test]
+    fn storage_with_no_server_is_shared() {
+        assert_eq!(storage_owner(Some(1), None), Owner::Here);
+        assert_eq!(storage_owner(Some(1), Some(0)), Owner::Here);
+    }
+
+    #[test]
+    fn storage_belongs_to_the_server_its_row_names() {
+        assert_eq!(storage_owner(Some(1), Some(1)), Owner::Here);
+        assert_eq!(storage_owner(Some(1), Some(2)), Owner::Peer(2));
+    }
+
+    #[test]
+    fn a_single_server_install_reaches_all_storage() {
+        assert_eq!(storage_owner(None, Some(2)), Owner::Here);
+        assert_eq!(storage_owner(None, None), Owner::Here);
+    }
+
+    #[test]
+    fn a_job_skips_a_peers_storage_and_says_so_once() {
+        let log = SkipLog::default();
+        let mut st = crate::entity::storage::Model {
+            id: 3,
+            path: "/srv/zm2".into(),
+            name: "zm2 events".into(),
+            r#type: crate::entity::sea_orm_active_enums::StorageType::Local,
+            url: None,
+            disk_space: None,
+            scheme: crate::entity::sea_orm_active_enums::Scheme::Medium,
+            server_id: Some(2),
+            do_delete: 1,
+            enabled: 1,
+        };
+        assert!(skips_peer_storage(&log, "test", Some(1), &st));
+        assert!(log.first_time(4), "another storage is new");
+        assert!(!log.first_time(3), "this one was already announced");
+        // Still skipped the second time, only not announced again.
+        assert!(skips_peer_storage(&log, "test", Some(1), &st));
+        // Shared, or this server's own, or a single-server install: not skipped.
+        st.server_id = None;
+        assert!(!skips_peer_storage(&log, "test", Some(1), &st));
+        st.server_id = Some(1);
+        assert!(!skips_peer_storage(&log, "test", Some(1), &st));
+        st.server_id = Some(2);
+        assert!(!skips_peer_storage(&log, "test", None, &st));
     }
 
     #[test]

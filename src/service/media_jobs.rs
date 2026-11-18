@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::dto::request::media_jobs::{GenerateVideoRequest, JobListQuery, VideoTransform};
 use crate::dto::response::media_jobs::{EventVideoResponse, MediaJobResponse};
@@ -546,8 +546,12 @@ async fn jobs(state: &AppState) -> &JobStore {
 pub async fn run_pending(state: &AppState) -> usize {
     let store = jobs(state).await;
     let mut ran = 0;
+    // Jobs for events whose files another server holds. They stay queued for
+    // that server's worker (the table is shared) and are not looked at again
+    // this round.
+    let mut elsewhere: Vec<u32> = Vec::new();
     loop {
-        let job = match store.next_queued(state.db()).await {
+        let job = match store.next_queued(state.db(), &elsewhere).await {
             Ok(Some(j)) => j,
             Ok(None) => return ran,
             Err(e) => {
@@ -555,6 +559,25 @@ pub async fn run_pending(state: &AppState) -> usize {
                 return ran;
             }
         };
+        match state
+            .cluster
+            .event_storage_owner(state.db(), job.event_id)
+            .await
+        {
+            Ok(crate::cluster::Owner::Peer(server)) => {
+                debug!(
+                    "media job {}: event {} is on server {server}; leaving it to that server",
+                    job.id, job.event_id
+                );
+                elsewhere.push(job.id);
+                continue;
+            }
+            Ok(crate::cluster::Owner::Here) => {}
+            Err(e) => {
+                warn!("media jobs: {e}");
+                return ran;
+            }
+        }
         // Claim it; another instance may have.
         if !store
             .claim(state.db(), job.id, now())

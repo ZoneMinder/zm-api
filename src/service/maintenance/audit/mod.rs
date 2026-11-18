@@ -43,6 +43,10 @@ use crate::configure::maintenance::AuditConfig;
 pub struct AuditService {
     db: Arc<DatabaseConnection>,
     config: AuditConfig,
+    /// Which `Servers` row this host is. A storage area that names another
+    /// server holds files this host can't see, so it is left alone.
+    this_server: Option<u32>,
+    announced: crate::cluster::SkipLog,
     /// Orphans seen on previous passes, and how many times.
     ///
     /// Nothing is acted on until it has been seen `confirmations_required`
@@ -155,8 +159,31 @@ impl AuditService {
         Self {
             db,
             config,
+            this_server: None,
+            announced: Default::default(),
             seen_orphans: tokio::sync::Mutex::new(OrphanTracker::default()),
         }
+    }
+
+    /// Record which `Servers` row is this host (`None` = single-server).
+    pub fn with_server_id(mut self, server_id: Option<u32>) -> Self {
+        self.this_server = server_id;
+        self
+    }
+
+    /// The storage rows whose files this host can see. Walking another
+    /// server's storage would find nothing, call every event on it
+    /// media-less, and delete their rows.
+    async fn local_storages(&self) -> Result<Vec<crate::entity::storage::Model>, DbErr> {
+        use sea_orm::EntityTrait;
+        Ok(crate::entity::storage::Entity::find()
+            .all(self.db.as_ref())
+            .await?
+            .into_iter()
+            .filter(|st| {
+                !crate::cluster::skips_peer_storage(&self.announced, "audit", self.this_server, st)
+            })
+            .collect())
     }
 
     pub fn spawn(self: Arc<Self>) {
@@ -231,11 +258,8 @@ impl AuditService {
     /// stop the others — a single unmounted volume should not disable the
     /// audit for the whole install.
     async fn reconcile_filesystem(&self, report: &mut AuditReport) -> Result<(), DbErr> {
-        use crate::entity::storage;
-        use sea_orm::EntityTrait;
-
         let fs = &self.config.filesystem;
-        let storages = storage::Entity::find().all(self.db.as_ref()).await?;
+        let storages = self.local_storages().await?;
 
         // Candidates gathered across all storages, so the confirmation tracker
         // sees one coherent view per pass rather than one per storage.
@@ -654,7 +678,28 @@ impl AuditService {
     /// deleted live recordings (#124). Archived events are excluded — see the
     /// module note.
     async fn remove_empty_events(&self) -> Result<u64, DbErr> {
-        let predicate = empty_event_predicate(self.config.min_age_seconds);
+        use sea_orm::EntityTrait;
+        let mut predicate = empty_event_predicate(self.config.min_age_seconds);
+        // An event on another server's storage is that server's to judge: its
+        // row goes only with its files.
+        let elsewhere: Vec<String> = crate::entity::storage::Entity::find()
+            .all(self.db.as_ref())
+            .await?
+            .into_iter()
+            .filter(|st| {
+                matches!(
+                    crate::cluster::storage_owner(self.this_server, st.server_id),
+                    crate::cluster::Owner::Peer(_)
+                )
+            })
+            .map(|st| st.id.to_string())
+            .collect();
+        if !elsewhere.is_empty() {
+            predicate.push_str(&format!(
+                " AND (StorageId IS NULL OR StorageId NOT IN ({}))",
+                elsewhere.join(",")
+            ));
+        }
         self.delete_where("Events", &predicate).await
     }
 

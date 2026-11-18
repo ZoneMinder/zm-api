@@ -204,15 +204,21 @@ impl JobStore {
         }
     }
 
-    /// The oldest queued job.
-    pub async fn next_queued(&self, db: &DatabaseConnection) -> AppResult<Option<Model>> {
+    /// The oldest queued job, leaving out the ids in `skip`: jobs this server
+    /// has seen and can't run (their event's files are on another server).
+    pub async fn next_queued(
+        &self,
+        db: &DatabaseConnection,
+        skip: &[u32],
+    ) -> AppResult<Option<Model>> {
         match self {
             JobStore::Table => Ok(media_jobs::Entity::find()
                 .filter(media_jobs::Column::Status.eq(QUEUED))
+                .filter(media_jobs::Column::Id.is_not_in(skip.iter().copied()))
                 .order_by_asc(media_jobs::Column::Id)
                 .one(db)
                 .await?),
-            JobStore::File(f) => Ok(f.next_queued().await),
+            JobStore::File(f) => Ok(f.next_queued(skip).await),
         }
     }
 
@@ -502,12 +508,12 @@ impl FileJobs {
         self.save(&jobs).await
     }
 
-    async fn next_queued(&self) -> Option<Model> {
+    async fn next_queued(&self, skip: &[u32]) -> Option<Model> {
         self.jobs
             .lock()
             .await
             .iter()
-            .find(|j| j.status == QUEUED)
+            .find(|j| j.status == QUEUED && !skip.contains(&j.id))
             .cloned()
     }
 
@@ -565,11 +571,27 @@ mod tests {
         // A restart: the running job goes back in the queue, ids continue.
         let store = JobStore::File(FileJobs::load(path).await);
         store.requeue_running(&db).await.unwrap();
-        let next = store.next_queued(&db).await.unwrap().unwrap();
+        let next = store.next_queued(&db, &[]).await.unwrap().unwrap();
         assert_eq!(next.id, a.id);
         assert_eq!(next.created_at, from_ms(1_760_000_000_123));
         let c = store.insert(&db, new_job(12, 1)).await.unwrap();
         assert_eq!(c.id, 3);
+    }
+
+    #[tokio::test]
+    async fn the_next_job_can_pass_over_ones_this_server_cannot_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JobStore::File(FileJobs::load(dir.path().join("j.json")).await);
+        let db = db();
+        let a = store.insert(&db, new_job(10, 1)).await.unwrap();
+        let b = store.insert(&db, new_job(11, 1)).await.unwrap();
+        let next = store.next_queued(&db, &[a.id]).await.unwrap().unwrap();
+        assert_eq!(next.id, b.id);
+        assert!(store
+            .next_queued(&db, &[a.id, b.id])
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
@@ -614,7 +636,7 @@ mod tests {
         assert_eq!(got.output.as_deref(), Some("Event-2.mp4"));
         store.delete(&db, a.id).await.unwrap();
         assert!(store.get(&db, a.id).await.unwrap().is_none());
-        assert!(store.next_queued(&db).await.unwrap().is_none());
+        assert!(store.next_queued(&db, &[]).await.unwrap().is_none());
     }
 
     #[tokio::test]

@@ -18,7 +18,14 @@ recognisable path forward.
   settings name the other servers where the default (this server's scheme and
   port on `Servers.Hostname`) is wrong. `GET /api/v3/servers` gains `api_url`
   and `is_this_server`. See the multi-server guide for the limits: WebSocket
-  signalling, system-wide control and recordings are not relayed yet.
+  signalling and system-wide control are not relayed.
+- **Recordings on per-server storage** (multi-server installs). A storage
+  area with a `ServerId` holds its files on that server only. A request for
+  an event's video, frames, thumbnail, synopsis or generated videos, or to
+  delete the event, is now relayed to the server that holds the files, with
+  the caller's own token. Storage with no `ServerId` is shared and is never
+  relayed. Export and the storage list act on what this server can read, and
+  say so. Media jobs wait for the server that can read the event.
 - **Live event stream**, `GET /api/v3/events/stream` (Server-Sent Events):
   `event_start`, `event_end` and `event_updated` (notes changed, where object
   detection writes) for every monitor the caller may see, and each monitor's
@@ -267,6 +274,14 @@ recognisable path forward.
   `--force` takes over despite a failed check.
 
 ### Fixed
+
+- **The retention reaper and the maintenance audit no longer act on another
+  server's storage.** On a multi-server install they ran against every
+  `Storage` row. They could not see a per-server area's files, so the audit
+  could take every event on it for one with no media and delete the rows, and
+  the reaper measured the wrong disk. Both now skip a storage whose
+  `ServerId` is another server, and say so once in the log. The audit's
+  empty-event sweep and the event audit report also leave those events alone.
 
 - **`POST /events` works.** It never set `Events.StateId`, which is NOT NULL
   with no default, so every create failed with 500. It now records the

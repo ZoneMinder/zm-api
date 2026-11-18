@@ -351,3 +351,62 @@ async fn reap_dry_run_reports_but_deletes_nothing() {
     assert!(event_exists(&db, e2).await, "dry-run must not delete e2");
     assert!(event_exists(&db, e3).await, "dry-run must not delete e3");
 }
+
+/// A storage that belongs to another server holds files this host can't see
+/// or measure. The reaper leaves its events and rows alone, however far over
+/// quota the rows say it is, and still reaps a storage every server shares.
+#[tokio::test]
+#[ignore = "requires the test database (APP_PROFILE=test-db)"]
+async fn reap_leaves_another_servers_storage_alone() {
+    let iso = common::isolated::IsolatedDb::create().await;
+    let db = iso.connect().await;
+    let monitor = insert_monitor(&db, "ReapPeerMon").await.expect("monitor");
+    let _mg = RowGuard::monitor(monitor.id);
+
+    let mut results = Vec::new();
+    // Held to the end: dropping a guard deletes its row.
+    let (mut guards, mut dirs) = (Vec::new(), Vec::new());
+    for (label, server) in [("ReapPeer", Some(2u32)), ("ReapShared", None)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (storage, guard) = dedicated_storage(&db, &tmp, label).await;
+        let mut row: zm_api::entity::storage::ActiveModel = storage.into();
+        row.server_id = Set(server);
+        let storage = row.update(&db).await.expect("server");
+
+        let base = zm_api::util::time::utc_now();
+        let mut events = Vec::new();
+        for (hours, name) in [(3, "old"), (1, "new")] {
+            let id = insert_event(
+                &db,
+                monitor.id,
+                storage.id,
+                base - jiff::SignedDuration::from_hours(hours),
+                true,
+                0,
+                100 * MIB,
+                name,
+            )
+            .await;
+            make_event_dir(tmp.path(), monitor.id, id);
+            events.push((id, guard_event(id)));
+        }
+        // Over quota by a wide margin: the oldest would go on a storage this
+        // host owns.
+        let deleted = service(quota_config(50 * MIB, false), &iso)
+            .await
+            .with_server_id(Some(1))
+            .reap_storage_once(&storage, false)
+            .await
+            .expect("reap");
+        results.push((deleted, events.first().map(|(id, _)| *id)));
+        guards.push((events, guard));
+        dirs.push(tmp);
+    }
+
+    let (peer_deleted, peer_old) = &results[0];
+    assert_eq!(*peer_deleted, 0, "another server's storage is not reaped");
+    assert!(event_exists(&db, peer_old.unwrap()).await);
+    let (shared_deleted, shared_old) = &results[1];
+    assert_eq!(*shared_deleted, 1, "shared storage still is");
+    assert!(!event_exists(&db, shared_old.unwrap()).await);
+}

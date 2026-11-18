@@ -119,6 +119,21 @@ pub async fn event_audit(
         .all(state.db())
         .await?;
 
+    // Events on another server's storage can't be checked from here: their
+    // files are not visible, so every one would be reported as missing. They
+    // are counted, and their media left to the server that holds it.
+    let elsewhere: std::collections::HashSet<u16> = crate::repo::storage::find_all(state.db())
+        .await?
+        .into_iter()
+        .filter(|st| {
+            matches!(
+                state.cluster.owner_of_storage(st.server_id),
+                crate::cluster::Owner::Peer(_)
+            )
+        })
+        .map(|st| st.id)
+        .collect();
+
     // Storage roots resolve once per storage, not once per event.
     let mut roots: HashMap<Option<u16>, Option<String>> = HashMap::new();
     let mut by_monitor: BTreeMap<u32, Acc> = BTreeMap::new();
@@ -130,6 +145,9 @@ pub async fn event_audit(
             e.end_date_time.map(time::civil),
         );
 
+        if e.storage_id.is_some_and(|id| elsewhere.contains(&id)) {
+            continue;
+        }
         let root = match roots.get(&e.storage_id) {
             Some(root) => root.clone(),
             None => {
