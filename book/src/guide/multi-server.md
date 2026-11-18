@@ -14,7 +14,8 @@ The relayed request carries the caller's own token. The owning server authentica
 
 What is relayed:
 
-- live HLS, live start and stop, live stats, WHEP
+- live HLS, live start and stop, live stats, WHEP, and the WebRTC signalling WebSocket (see [WebSockets](#websockets))
+- a monitor's status (`GET /api/v3/monitor-status/{id}`), which reads shared memory
 - snapshots
 - forcing and cancelling an alarm
 - PTZ
@@ -24,6 +25,26 @@ What is relayed:
 - an event's recording and files (see [Recordings](#recordings))
 
 What stays on the server the client asked: anything that only reads or writes the database, such as listing monitors, reading a monitor's row, listing events, reading or editing an event's row, tags and users.
+
+## WebSockets
+
+`GET /api/v3/live/{monitor_id}/webrtc/ws` carries WebRTC signalling. For another server's monitor, this server checks that you may see the monitor, then opens its own WebSocket to the same path and query on the owning server, with your `Authorization` header and any `Sec-WebSocket-Protocol` you offered. Only then does it accept your upgrade, so the answers are ordinary HTTP errors:
+
+- the owning server is down: 502
+- the owning server refuses (404, 403, 503, ...): the same status and body come back to you
+- the servers have different JWT keys: 502
+
+After that, messages are copied one at a time in both directions (text, binary, ping, pong and close, with the close code and reason). When either side closes or fails, the other is closed. A failure on the owning server's side closes your socket with code 1011. The relay sets no idle timeout, since a signalling socket can sit quiet for a long time.
+
+WebRTC media still travels direct from the owning server to the viewer over UDP. The viewer must be able to reach that server. Only the signalling goes through this one.
+
+For `wss://` the relay trusts the system's root certificates. If `cluster.tls_ca_file` is set it trusts that file's certificates alone for WebSockets, because the WebSocket client can't add to the system roots the way the HTTP client does. Put every CA the peers need in that file.
+
+A request that only claims to upgrade, without a valid WebSocket handshake, answers 421.
+
+## The live event stream
+
+`GET /api/v3/events/stream` covers every server. Events come from the shared database, so any server has them all. Alarm states come from shared memory, which only the server that runs a monitor has. So the server you connect to also follows each other server's stream for that server's alarm states, and merges them into yours. Each of your own streams opens one stream to each other server, with your own token, so the other server applies your permissions and ends the stream when your token expires. Your server shows you an alarm state only for monitors you may see and only from the server that runs the monitor. If a server is down, its monitors send no alarm states until it is back; the rest of the stream is not affected. See [Live events](live-events.md#several-servers).
 
 ## Recordings
 
@@ -91,10 +112,15 @@ On an install with one server, `all` answers with a single entry whose `server_i
 
 Run states are not aimed at one server. `server_id=all` is the same as leaving it out, and a server's number answers 400.
 
+## Live sessions and sources
+
+`GET /api/v3/live/sessions` and `GET /api/v3/live/sources` list one server's live sessions and sources. They take `?server_id=<n>|all` exactly as the daemon routes do (see above): a number is relayed, and `all` answers 207 with one entry per server.
+
 ## Limits
 
-- **WebRTC media goes direct.** WHEP signalling is relayed, but the video itself travels over UDP from the server that runs the camera. The viewer must be able to reach that server.
-- **WebSocket signalling is not relayed.** A WebSocket for another server's monitor answers 421 with that server's address. Use WHEP, or connect to that server.
+- **WebRTC media goes direct.** WHEP and WebSocket signalling are relayed, but the video itself travels over UDP from the server that runs the camera. The viewer must be able to reach that server.
+- **The monitor status list has no live fields for other servers' monitors.** `GET /api/v3/monitor-status` fills `alarm_state` and the other shared-memory fields only for this server's monitors. Ask for one monitor (`/monitor-status/{id}`) to have it answered by its server, or use the [live event stream](live-events.md#several-servers).
+- **The event stream follows the servers it sees when it opens.** A server added later is picked up by the next connection.
 - **Whole-database views are not relayed.** The media job list (`/api/v3/jobs`) shows the queue this server sees: all jobs when the database holds the queue, only this server's when a file does. The range synopsis (`/api/v3/events/synopsis`) names no single event, so this server answers it.
 - **A logout takes up to ten seconds to reach the other servers.** Each server re-reads the token floors from the database on that interval.
 - **Rate limits see the relaying server.** A relayed request arrives from another server's address, with the client's own appended to `X-Forwarded-For`. The global limiter is off by default. If you turn it on, set `trust_proxy_headers = true` and list the other servers in `trusted_proxies`, so each client is counted on its own.

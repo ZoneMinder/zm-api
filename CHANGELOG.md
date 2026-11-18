@@ -10,6 +10,17 @@ recognisable path forward.
 
 ### Added
 
+- **Streams across servers** (multi-server installs). The WebRTC signalling
+  WebSocket (`/api/v3/live/{id}/webrtc/ws`) for another server's monitor is
+  relayed: this server checks the caller, connects to the owning server, then
+  accepts the upgrade, so a server that is down or refuses gives an HTTP
+  error. `GET /api/v3/events/stream` now carries every server's `alarm_state`
+  messages, by following each other server's stream with the client's own
+  token. `GET /api/v3/monitor-status/{id}` is answered by the server that runs
+  the monitor. `GET /api/v3/live/sessions` and `/live/sources` take
+  `?server_id=<n>|all`. On a multi-server install the event stream no longer
+  reports other servers' monitors as `unknown`. Enables the
+  `rustls-tls-native-roots` feature of `tokio-tungstenite` for `wss://`.
 - **System control across servers** (multi-server installs). The daemon and
   system routes (`/api/v3/daemons`, `/api/v3/system/*`) take
   `?server_id=<n>` to act on another server, relayed to its zm-api with the

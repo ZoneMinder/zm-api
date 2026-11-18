@@ -7548,6 +7548,17 @@
         ],
         "summary": "List all active live streams",
         "operationId": "listLiveSessions",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "description": "Absent: this server. A server's number: that server, relayed to its\nzm-api when it is not this one. `all`: every server, answered with 207\nand one entry per server (see `AllServersResponse`). A request that\nanother server already relayed is always handled here.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "List of active live sessions",
@@ -7560,6 +7571,56 @@
                     "format": "int32",
                     "minimum": 0
                   }
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "With `server_id=all`: one entry per server; the status is 207 even when every server failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`server_id` is neither a server number nor `all`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server has the number given in `server_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "The server named by `server_id` has no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The server named by `server_id` did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
                 }
               }
             }
@@ -7599,9 +7660,75 @@
         ],
         "summary": "Get source router statistics",
         "operationId": "getLiveSources",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "description": "Absent: this server. A server's number: that server, relayed to its\nzm-api when it is not this one. `all`: every server, answered with 207\nand one entry per server (see `AllServersResponse`). A request that\nanother server already relayed is always handled here.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Source statistics"
+            "description": "Source statistics: `active_sources` and `sources`",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "207": {
+            "description": "With `server_id=all`: one entry per server; the status is 207 even when every server failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`server_id` is neither a server number nor `all`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server has the number given in `server_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "The server named by `server_id` has no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The server named by `server_id` did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
           },
           "503": {
             "description": "Service unavailable",
@@ -9980,11 +10107,31 @@
         ],
         "responses": {
           "200": {
-            "description": "Monitor status detail",
+            "description": "Monitor status detail. For a monitor another server runs, the request is relayed to that server, which reads its shared memory",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MonitorStatusResponse"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "The server that runs the monitor has no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The server that runs the monitor did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
                 }
               }
             }
@@ -34761,10 +34908,6 @@
             "description": "Whether the server answered with a success status."
           },
           "result": {
-            "type": [
-              "object",
-              "null"
-            ],
             "description": "The JSON the server answered, as it would for the same request sent to\nit alone."
           },
           "server_id": {

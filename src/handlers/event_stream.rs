@@ -14,6 +14,9 @@ use serde::Deserialize;
 use tokio::sync::broadcast;
 use utoipa::IntoParams;
 
+use crate::cluster::events::{follow_peers, PeerAlarm, PeerStreams};
+use crate::cluster::forward::FORWARDED_BY;
+use crate::cluster::Owner;
 use crate::error::{AppResponseError, AppResult};
 use crate::server::state::AppState;
 use crate::service::event_stream::{self, StreamMessage};
@@ -41,6 +44,12 @@ struct Subscriber {
     claims: UserClaims,
     scope: MonitorScope,
     monitor: Option<u32>,
+    /// Another server asked for this stream on behalf of a client: only this
+    /// server's alarm states are wanted, because the client's own server has
+    /// the events already.
+    alarms_only: bool,
+    /// The alarm states of the monitors other servers run.
+    peers: Option<PeerStreams>,
     queue: VecDeque<StreamMessage>,
     rx: broadcast::Receiver<StreamMessage>,
     recheck: tokio::time::Interval,
@@ -51,8 +60,26 @@ struct Subscriber {
 
 impl Subscriber {
     fn shows(&self, msg: &StreamMessage) -> bool {
+        if self.alarms_only && !matches!(msg, StreamMessage::AlarmState(_)) {
+            return false;
+        }
         let m = msg.monitor_id();
         self.monitor.is_none_or(|f| f == m) && self.scope.allows(m, Level::View)
+    }
+}
+
+impl Subscriber {
+    /// An alarm state a peer sent, if that peer runs the monitor (it can't
+    /// speak for any other) and this caller may see the monitor.
+    async fn peer_alarm(&self, from: PeerAlarm) -> Option<StreamMessage> {
+        let owner = self
+            .state
+            .cluster
+            .monitor_owner(self.state.db(), from.alarm.monitor_id)
+            .await
+            .ok()?;
+        let msg = StreamMessage::AlarmState(from.alarm);
+        (owner == Owner::Peer(from.server_id) && self.shows(&msg)).then_some(msg)
     }
 }
 
@@ -128,14 +155,19 @@ pub async fn stream_events(
     Query(q): Query<EventStreamQuery>,
     headers: HeaderMap,
 ) -> AppResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
+    // Another server's request on behalf of a client: this server's own
+    // alarm states only, no replay, and nobody else to follow.
+    let alarms_only = headers.contains_key(&FORWARDED_BY);
     let since = q.since.or_else(|| {
         headers
             .get("last-event-id")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.trim().parse().ok())
     });
+    let since = since.filter(|_| !alarms_only);
     // Subscribe before the snapshot and replay, so nothing falls between.
     let rx = state.event_hub.subscribe(&state);
+    let peers = follow_peers(&state, &headers, q.monitor_id).await?;
 
     let mut sub = Subscriber {
         expires: tokio::time::Instant::now()
@@ -144,6 +176,8 @@ pub async fn stream_events(
         claims,
         scope,
         monitor: q.monitor_id,
+        alarms_only,
+        peers,
         queue: VecDeque::new(),
         rx,
         recheck: tokio::time::interval(RECHECK),
@@ -182,6 +216,20 @@ pub async fn stream_events(
                         return Some((Ok(event), sub));
                     }
                     Err(broadcast::error::RecvError::Closed) => return None,
+                },
+                alarm = async {
+                    match sub.peers.as_mut() {
+                        Some(peers) => peers.next().await,
+                        None => std::future::pending().await,
+                    }
+                } => match alarm {
+                    Some(alarm) => match sub.peer_alarm(alarm).await {
+                        Some(msg) => return Some((Ok(sse(&msg)), sub)),
+                        None => continue,
+                    },
+                    // Every peer refused this caller's token: nothing more
+                    // will come, and the local stream goes on.
+                    None => sub.peers = None,
                 },
                 _ = sub.recheck.tick() => match still_allowed(&sub.state, &sub.claims).await {
                     Some(scope) => sub.scope = scope,

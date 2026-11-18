@@ -46,10 +46,39 @@ The stream ends when your access token expires and when you lose access
 minute). Reconnect with a fresh token and `Last-Event-ID`. A comment line
 arrives every 15 seconds, so a silent connection is a dead one.
 
+## Several servers
+
+On an install with more than one ZoneMinder server, one subscription covers
+every server. Events are read from the shared database, so any server has
+them all. Alarm states exist only on the server that runs a camera, so the
+server you connect to also subscribes to each other server's stream and passes
+on its `alarm_state` messages, for that server's own cameras only. Nothing is
+sent twice.
+
+- Each of your streams opens one upstream stream per other server, with your
+  own token. That server applies your permissions and ends its stream when your
+  token expires, as it would for you directly. This costs one connection per
+  client per server.
+- A server that is down does not break your stream. Its cameras send no
+  `alarm_state` updates until it is back. zm-api reconnects with a wait that
+  grows to 30 seconds and logs one warning per outage.
+- On connect you get the current state of each camera as before, from its own
+  server. After a server returns, only states that changed are sent.
+- You see an `alarm_state` only for cameras you may see.
+- `Last-Event-ID` and `?since=` replay events from the database, which covers
+  every server. Alarm states are never replayed.
+- A request that carries `X-ZM-Forwarded-By`, which is how one zm-api asks
+  another, gets only that server's own alarm states and opens no further
+  streams, so servers never follow each other in a loop.
+
+A single-server install opens no upstream connections and its output is the same.
+
 ## How it works
 
 One watcher in zm-api serves every subscriber and runs only while someone is
 connected. Alarm states come from each camera's shared memory, four times a
 second; a camera's new event wakes the watcher at once. Events come from
 ZoneMinder's `Events` table, so cameras on other ZoneMinder servers appear too,
-within a second or so. Nothing is written to the database.
+within a second or so. Nothing is written to the database. On a multi-server
+install the watcher reads shared memory only for the cameras its own server
+runs.

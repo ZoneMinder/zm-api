@@ -14,8 +14,10 @@
 //! credential that can act as anyone. That requires every server to share
 //! the same JWT key files.
 
+pub mod events;
 pub mod forward;
 pub mod system;
+pub mod websocket;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -149,6 +151,10 @@ pub struct Cluster {
     port: u16,
     overrides: HashMap<u32, String>,
     client: reqwest::Client,
+    connect_timeout: Duration,
+    /// What a WebSocket to another server trusts, when `cluster.tls_ca_file`
+    /// is set. `None` means the system roots.
+    ws_tls: Option<Arc<rustls::ClientConfig>>,
     servers: Cached<Arc<HashMap<u32, ServerRow>>>,
     owners: Mutex<HashMap<u32, (Instant, Option<u32>)>>,
     /// An event's monitor and its storage's `ServerId`, by event id.
@@ -180,6 +186,8 @@ impl Cluster {
             port: config.peer_port.unwrap_or(own_port),
             overrides: config.peer_overrides(),
             client: build_client(config),
+            connect_timeout: Duration::from_secs(config.connect_timeout_secs.max(1)),
+            ws_tls: build_ws_tls(config),
             servers: Mutex::new(None),
             owners: Mutex::new(HashMap::new()),
             events: Mutex::new(HashMap::new()),
@@ -203,6 +211,14 @@ impl Cluster {
 
     pub(crate) fn client(&self) -> &reqwest::Client {
         &self.client
+    }
+
+    pub(crate) fn connect_timeout(&self) -> Duration {
+        self.connect_timeout
+    }
+
+    pub(crate) fn ws_tls(&self) -> Option<Arc<rustls::ClientConfig>> {
+        self.ws_tls.clone()
     }
 
     /// The server that owns a monitor. `Here` for a monitor that doesn't
@@ -445,6 +461,42 @@ fn build_client(config: &ClusterConfig) -> reqwest::Client {
         }
     }
     builder.build().unwrap_or_default()
+}
+
+/// The TLS settings for a WebSocket to another server. Only built when
+/// `cluster.tls_ca_file` is set: the file's certificates are then the only
+/// roots, because the WebSocket connector can't add to the system roots the
+/// way the HTTP client does. Without the setting the connector uses the
+/// system roots.
+fn build_ws_tls(config: &ClusterConfig) -> Option<Arc<rustls::ClientConfig>> {
+    use rustls_pki_types::pem::PemObject;
+    let path = config.tls_ca_file.as_ref()?;
+    let certs = match rustls_pki_types::CertificateDer::pem_file_iter(path)
+        .and_then(|certs| certs.collect::<Result<Vec<_>, _>>())
+    {
+        Ok(certs) => certs,
+        Err(e) => {
+            tracing::warn!("cluster.tls_ca_file {}: {e}", path.display());
+            return None;
+        }
+    };
+    let mut roots = rustls::RootCertStore::empty();
+    let (added, _) = roots.add_parsable_certificates(certs);
+    if added == 0 {
+        tracing::warn!(
+            "cluster.tls_ca_file {}: no usable certificate",
+            path.display()
+        );
+        return None;
+    }
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .ok()?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    Some(Arc::new(config))
 }
 
 #[cfg(test)]
