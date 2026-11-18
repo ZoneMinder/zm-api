@@ -106,12 +106,16 @@ else
 fi
 info "Built $(basename "$ARTIFACT") ($(du -h "$ARTIFACT" | cut -f1))"
 
-# On-box install command for whichever artifact we built.
+# On-box install command for whichever artifact we built. The upload goes to
+# the login's home directory, not /tmp: with a fixed name in a directory every
+# local user can write to, someone else on the box could put their own file
+# there, or swap it between the upload and the `sudo install` below, and have
+# it installed as root.
 if [ "$FAST" = "yes" ]; then
-    REMOTE="/tmp/zm-api.new"
+    REMOTE="./zm-api.new"
     INSTALL_CMD="sudo install -m 0755 ${REMOTE} /usr/bin/zm-api && rm -f ${REMOTE} && sudo systemctl restart ${SERVICE} && systemctl --no-pager --full status ${SERVICE} | head -n 15"
 else
-    REMOTE="/tmp/zm-api.deb"
+    REMOTE="./zm-api.deb"
     INSTALL_CMD="sudo apt-get install -y ${REMOTE} && rm -f ${REMOTE} && sudo systemctl enable --now ${SERVICE} && sudo systemctl restart ${SERVICE} && systemctl --no-pager --full status ${SERVICE} | head -n 20"
 fi
 

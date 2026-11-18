@@ -47,6 +47,7 @@ FALLBACK_HOME="/var/lib/zoneminder"
 STATE_DIR="/var/lib/zm-api"
 KEY_DIR="${STATE_DIR}/keys"
 LOG_DIR="/var/log/zm-api"
+CONFIG_DIR="${ZM_API_CONFIG_DIR:-/etc/zm-api}"
 
 # Last assignment of KEY across zm.conf and conf.d/*.conf, the order
 # ZoneMinder itself reads them in.
@@ -155,6 +156,19 @@ mv -f "$tmp" "$DROPIN"
 # ---------------------------------------------------------------------------
 install -d -o "$svc_user" -g "$svc_group" -m 0750 "$STATE_DIR" "$KEY_DIR" "$LOG_DIR"
 chown -R "$svc_user:$svc_group" "$STATE_DIR" "$LOG_DIR"
+
+# ---------------------------------------------------------------------------
+# 4b. prod.toml and zm-api.env are where an operator puts the database
+#     password, the TURN password and API keys, and the packages install them
+#     0644. Close them to everyone but root and the service account. base.toml
+#     is the packaged defaults and stays readable.
+# ---------------------------------------------------------------------------
+for f in prod.toml zm-api.env; do
+  if [[ -f "${CONFIG_DIR}/${f}" && ! -L "${CONFIG_DIR}/${f}" ]]; then
+    chown "root:${svc_group}" "${CONFIG_DIR}/${f}"
+    chmod 0640 "${CONFIG_DIR}/${f}"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # 5. JWT signing keys, generated once and never overwritten.
