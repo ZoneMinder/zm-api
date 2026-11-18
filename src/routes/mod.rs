@@ -673,7 +673,10 @@ pub fn create_router_app(state: AppState) -> Router {
     // `[daemon].enable_rest_api = false` leaves daemon/system control to the
     // legacy socket only; the routes are not registered at all (#88).
     let daemon_routes = if config.daemon.enable_rest_api {
-        protect(daemon::add_daemon_routes(Router::new()), Feature::System)
+        protect(
+            daemon::add_daemon_routes(Router::new(), state.clone()),
+            Feature::System,
+        )
     } else {
         Router::new()
     };

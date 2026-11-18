@@ -574,6 +574,73 @@ pub async fn apply_state(state: &AppState, state_name: &str) -> AppResult<Daemon
     }
 }
 
+/// Bring this server's daemons in line with a run state that another server
+/// already wrote to the database. Writes nothing.
+///
+/// The daemons here don't watch the database, so the server that applied the
+/// state tells each of the others (`daemons_only`). Passive mode can't tell
+/// which monitors changed, because the rows are already new, so it restarts
+/// every monitor of this server the state names, as an edit does. A
+/// supervised server restarts everything, as applying a state does.
+pub async fn restart_daemons_for_state(
+    state: &AppState,
+    state_name: &str,
+) -> AppResult<DaemonActionResponse> {
+    use crate::entity::states;
+    let zm_state = states::Entity::find()
+        .filter(states::Column::Name.eq(state_name))
+        .one(state.db.as_ref())
+        .await?
+        .ok_or_else(|| {
+            AppError::NotFoundError(crate::error::Resource {
+                resource_type: crate::error::ResourceType::Config,
+                details: vec![("state_name".to_string(), state_name.to_string())],
+            })
+        })?;
+
+    if state.daemon_manager.is_some() {
+        return Ok(match system_restart(state).await {
+            Ok(restart) => {
+                DaemonActionResponse::success(format!("State '{state_name}': {}", restart.message))
+            }
+            Err(e) => {
+                warn!("state '{state_name}': the daemon restart failed: {e}");
+                DaemonActionResponse::error(format!(
+                    "State '{state_name}': the daemon restart failed: {e}"
+                ))
+            }
+        });
+    }
+
+    let named = state_monitor_ids(&zm_state.definition);
+    let mine: Vec<monitors::Model> = monitors::Entity::find()
+        .filter(monitors::Column::Id.is_in(named))
+        .all(state.db.as_ref())
+        .await?
+        .into_iter()
+        .filter(|m| crate::service::monitor_daemons::runs_here(state.server_id, m.server_id))
+        .collect();
+    let count = mine.len();
+    let bg = state.clone();
+    tokio::spawn(async move {
+        for m in &mine {
+            crate::service::monitor_daemons::updated(&bg, m, m).await;
+        }
+    });
+    info!("State '{state_name}': restarting the daemons of {count} monitors through zmdc.pl");
+    Ok(DaemonActionResponse::success(format!(
+        "State '{state_name}': {count} monitors on this server with daemons restarting"
+    )))
+}
+
+/// The monitor ids a state definition names, in either format.
+fn state_monitor_ids(definition: &str) -> Vec<u32> {
+    definition
+        .split(',')
+        .filter_map(|entry| entry.trim().split(':').next()?.parse().ok())
+        .collect()
+}
+
 /// The monitors whose Capturing, Analysing or Recording differ between two
 /// reads, as (before, after).
 fn changed_modes<'a>(
@@ -776,6 +843,15 @@ mod tests {
         let action = response_to_action(resp);
         assert!(!action.success);
         assert_eq!(action.message, "Failed");
+    }
+
+    #[test]
+    fn a_state_names_its_monitors_in_either_format() {
+        assert_eq!(
+            state_monitor_ids("1:Always:Always:OnMotion, 2:Modect:1,x:None:0,,3"),
+            vec![1, 2, 3]
+        );
+        assert!(state_monitor_ids("").is_empty());
     }
 
     #[test]

@@ -10,6 +10,16 @@ recognisable path forward.
 
 ### Added
 
+- **System control across servers** (multi-server installs). The daemon and
+  system routes (`/api/v3/daemons`, `/api/v3/system/*`) take
+  `?server_id=<n>` to act on another server, relayed to its zm-api with the
+  caller's own token, or `?server_id=all` to act on every server and get a 207
+  with one result per server. Applying a run state
+  (`POST /api/v3/system/state`) now also tells every other server to restart
+  its daemons, and the response gains an optional `servers` list. The request
+  gains an optional `daemons_only` flag, which restarts daemons and writes
+  nothing. Without `server_id`, everything behaves as before on a
+  single-server install.
 - **Multi-server installs** (#230). Every ZoneMinder server runs a zm-api,
   and a request for a monitor another server runs is relayed to the zm-api
   there with the caller's own token: live HLS, WHEP, snapshots, alarms, PTZ,
@@ -18,7 +28,7 @@ recognisable path forward.
   settings name the other servers where the default (this server's scheme and
   port on `Servers.Hostname`) is wrong. `GET /api/v3/servers` gains `api_url`
   and `is_this_server`. See the multi-server guide for the limits: WebSocket
-  signalling and system-wide control are not relayed.
+  signalling is not relayed.
 - **Recordings on per-server storage** (multi-server installs). A storage
   area with a `ServerId` holds its files on that server only. A request for
   an event's video, frames, thumbnail, synopsis or generated videos, or to

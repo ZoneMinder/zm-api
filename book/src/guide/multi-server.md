@@ -71,11 +71,30 @@ If the servers use certificates from a private CA, point `cluster.tls_ca_file` a
 | 421 `belongs to server 2, which has no address` | The `Servers` row has no hostname and `cluster.peers` names none. |
 | 421 `the servers disagree` | Two servers each think the other runs the monitor. Check `ZM_SERVER_ID` on both. |
 
+## Daemons and system control
+
+`/api/v3/daemons` and `/api/v3/system/*` act on one server's daemons. Add `?server_id=` to say which:
+
+| `server_id` | What happens |
+| --- | --- |
+| absent | This server, as before. |
+| a number | That server. A request for another server is relayed to its zm-api with your own token, and its answer comes back unchanged. An unknown number answers 404, and a server with no address answers 421. |
+| `all` | Every server, at once. The answer is 207 with one entry per server: `server_id`, `name`, `ok`, `status`, and either `result` (what that server answered) or `error`. One server being down does not fail the request, so check each entry. This server is first. |
+
+The permission check happens here before anything is relayed, and the other server checks it again. A request that another server relayed is always handled where it lands, whatever `server_id` says.
+
+On an install with one server, `all` answers with a single entry whose `server_id` is `null`, and any number answers 404.
+
+### Applying a run state
+
+`POST /api/v3/system/state` changes monitor rows for every server in the shared database, so it reaches every server's daemons without a `server_id`. This server writes the rows once, then tells each other server to restart the daemons of its own monitors that the state names. It sends `{"state_name": ..., "daemons_only": true}`, which restarts daemons and writes nothing, so sending it twice is harmless. The response keeps its usual fields for this server and adds `servers`, one entry per other server in the same shape as above. A server that cannot be reached does not undo the change: its entry says `ok: false`, and its daemons pick up the new state at their next restart.
+
+Run states are not aimed at one server. `server_id=all` is the same as leaving it out, and a server's number answers 400.
+
 ## Limits
 
 - **WebRTC media goes direct.** WHEP signalling is relayed, but the video itself travels over UDP from the server that runs the camera. The viewer must be able to reach that server.
 - **WebSocket signalling is not relayed.** A WebSocket for another server's monitor answers 421 with that server's address. Use WHEP, or connect to that server.
-- **System-wide control is per server.** `/api/v3/daemons` and `/api/v3/system/*` act on the server that receives them.
 - **Whole-database views are not relayed.** The media job list (`/api/v3/jobs`) shows the queue this server sees: all jobs when the database holds the queue, only this server's when a file does. The range synopsis (`/api/v3/events/synopsis`) names no single event, so this server answers it.
 - **A logout takes up to ten seconds to reach the other servers.** Each server re-reads the token floors from the database on that interval.
 - **Rate limits see the relaying server.** A relayed request arrives from another server's address, with the client's own appended to `X-Forwarded-For`. The global limiter is off by default. If you turn it on, set `trust_proxy_headers = true` and list the other servers in `trusted_proxies`, so each client is counted on its own.

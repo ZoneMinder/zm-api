@@ -1807,6 +1807,17 @@
         ],
         "summary": "List all daemons.",
         "operationId": "list_daemons",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "description": "Absent: this server. A server's number: that server, relayed to its\nzm-api when it is not this one. `all`: every server, answered with 207\nand one entry per server (see `AllServersResponse`). A request that\nanother server already relayed is always handled here.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "List of all daemons",
@@ -1814,6 +1825,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DaemonListResponse"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "With `server_id=all`: one entry per server; the status is 207 even when every server failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`server_id` is neither a server number nor `all`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server has the number given in `server_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "The server named by `server_id` has no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The server named by `server_id` did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
                 }
               }
             }
@@ -1855,6 +1916,15 @@
         "operationId": "get_daemon",
         "parameters": [
           {
+            "name": "server_id",
+            "in": "query",
+            "description": "Absent: this server. A server's number: that server, relayed to its\nzm-api when it is not this one. `all`: every server, answered with 207\nand one entry per server (see `AllServersResponse`). A request that\nanother server already relayed is always handled here.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "id",
             "in": "path",
             "description": "Daemon identifier",
@@ -1875,8 +1945,48 @@
               }
             }
           },
+          "207": {
+            "description": "With `server_id=all`: one entry per server; the status is 207 even when every server failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`server_id` is neither a server number nor `all`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Daemon not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "The server named by `server_id` has no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The server named by `server_id` did not answer",
             "content": {
               "application/json": {
                 "schema": {
@@ -1922,6 +2032,15 @@
         "operationId": "reload_daemon",
         "parameters": [
           {
+            "name": "server_id",
+            "in": "query",
+            "description": "Absent: this server. A server's number: that server, relayed to its\nzm-api when it is not this one. `all`: every server, answered with 207\nand one entry per server (see `AllServersResponse`). A request that\nanother server already relayed is always handled here.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "id",
             "in": "path",
             "description": "Daemon identifier",
@@ -1938,6 +2057,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DaemonActionResponse"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "With `server_id=all`: one entry per server; the status is 207 even when every server failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`server_id` is neither a server number nor `all`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server has the number given in `server_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "The server named by `server_id` has no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The server named by `server_id` did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
                 }
               }
             }
@@ -1979,6 +2148,15 @@
         "operationId": "restart_daemon",
         "parameters": [
           {
+            "name": "server_id",
+            "in": "query",
+            "description": "Absent: this server. A server's number: that server, relayed to its\nzm-api when it is not this one. `all`: every server, answered with 207\nand one entry per server (see `AllServersResponse`). A request that\nanother server already relayed is always handled here.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "id",
             "in": "path",
             "description": "Daemon identifier",
@@ -1995,6 +2173,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DaemonActionResponse"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "With `server_id=all`: one entry per server; the status is 207 even when every server failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`server_id` is neither a server number nor `all`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server has the number given in `server_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "The server named by `server_id` has no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The server named by `server_id` did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
                 }
               }
             }
@@ -2036,6 +2264,15 @@
         "operationId": "start_daemon",
         "parameters": [
           {
+            "name": "server_id",
+            "in": "query",
+            "description": "Absent: this server. A server's number: that server, relayed to its\nzm-api when it is not this one. `all`: every server, answered with 207\nand one entry per server (see `AllServersResponse`). A request that\nanother server already relayed is always handled here.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "id",
             "in": "path",
             "description": "Daemon identifier",
@@ -2069,6 +2306,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DaemonActionResponse"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "With `server_id=all`: one entry per server; the status is 207 even when every server failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`server_id` is neither a server number nor `all`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server has the number given in `server_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "The server named by `server_id` has no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The server named by `server_id` did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
                 }
               }
             }
@@ -2110,6 +2397,15 @@
         "operationId": "stop_daemon",
         "parameters": [
           {
+            "name": "server_id",
+            "in": "query",
+            "description": "Absent: this server. A server's number: that server, relayed to its\nzm-api when it is not this one. `all`: every server, answered with 207\nand one entry per server (see `AllServersResponse`). A request that\nanother server already relayed is always handled here.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "id",
             "in": "path",
             "description": "Daemon identifier",
@@ -2126,6 +2422,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DaemonActionResponse"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "With `server_id=all`: one entry per server; the status is 207 even when every server failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`server_id` is neither a server number nor `all`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server has the number given in `server_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "The server named by `server_id` has no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The server named by `server_id` did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
                 }
               }
             }
@@ -19626,6 +19972,17 @@
         ],
         "summary": "Trigger log rotation for all daemons.",
         "operationId": "system_logrot",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "description": "Absent: this server. A server's number: that server, relayed to its\nzm-api when it is not this one. `all`: every server, answered with 207\nand one entry per server (see `AllServersResponse`). A request that\nanother server already relayed is always handled here.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Log rotation triggered",
@@ -19633,6 +19990,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DaemonActionResponse"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "With `server_id=all`: one entry per server; the status is 207 even when every server failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`server_id` is neither a server number nor `all`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server has the number given in `server_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "The server named by `server_id` has no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The server named by `server_id` did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
                 }
               }
             }
@@ -19759,6 +20166,17 @@
         ],
         "summary": "Perform full system restart.",
         "operationId": "system_restart",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "description": "Absent: this server. A server's number: that server, relayed to its\nzm-api when it is not this one. `all`: every server, answered with 207\nand one entry per server (see `AllServersResponse`). A request that\nanother server already relayed is always handled here.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "System restarted",
@@ -19766,6 +20184,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DaemonActionResponse"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "With `server_id=all`: one entry per server; the status is 207 even when every server failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`server_id` is neither a server number nor `all`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server has the number given in `server_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "The server named by `server_id` has no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The server named by `server_id` did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
                 }
               }
             }
@@ -19805,6 +20273,17 @@
         ],
         "summary": "Perform full system shutdown.",
         "operationId": "system_shutdown",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "description": "Absent: this server. A server's number: that server, relayed to its\nzm-api when it is not this one. `all`: every server, answered with 207\nand one entry per server (see `AllServersResponse`). A request that\nanother server already relayed is always handled here.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "System shutdown initiated",
@@ -19812,6 +20291,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DaemonActionResponse"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "With `server_id=all`: one entry per server; the status is 207 even when every server failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`server_id` is neither a server number nor `all`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server has the number given in `server_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "The server named by `server_id` has no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The server named by `server_id` did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
                 }
               }
             }
@@ -19931,6 +20460,17 @@
         ],
         "summary": "Perform full system startup.",
         "operationId": "system_startup",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "description": "Absent: this server. A server's number: that server, relayed to its\nzm-api when it is not this one. `all`: every server, answered with 207\nand one entry per server (see `AllServersResponse`). A request that\nanother server already relayed is always handled here.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "System started",
@@ -19938,6 +20478,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DaemonActionResponse"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "With `server_id=all`: one entry per server; the status is 207 even when every server failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`server_id` is neither a server number nor `all`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server has the number given in `server_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "The server named by `server_id` has no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The server named by `server_id` did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
                 }
               }
             }
@@ -19976,8 +20566,19 @@
           "System"
         ],
         "summary": "Apply a system state.",
-        "description": "States are predefined monitor configurations stored in the database.\nApplying a state updates monitor Function/Enabled settings and restarts affected daemons.",
+        "description": "States are predefined monitor configurations stored in the database.\nApplying a state updates monitor Function/Enabled settings and restarts affected daemons.\n\nOn a multi-server install the database change is made once, here, and then\nevery other server is told to restart its daemons for the monitors the\nstate names. What each of them answered is in `servers`; a server that\ncould not be reached does not undo the change. `server_id` may be absent or\n`all` (the same); a server's number is refused with 400, because the\nmonitors of every server change together. A request that another server\nrelayed is handled here only.",
         "operationId": "apply_state",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "description": "Absent: this server. A server's number: that server, relayed to its\nzm-api when it is not this one. `all`: every server, answered with 207\nand one entry per server (see `AllServersResponse`). A request that\nanother server already relayed is always handled here.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -19995,6 +20596,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DaemonActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`server_id` is neither absent nor `all`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
                 }
               }
             }
@@ -20037,6 +20648,17 @@
         ],
         "summary": "Get system status.",
         "operationId": "get_system_status",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "description": "Absent: this server. A server's number: that server, relayed to its\nzm-api when it is not this one. `all`: every server, answered with 207\nand one entry per server (see `AllServersResponse`). A request that\nanother server already relayed is always handled here.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "System status",
@@ -20044,6 +20666,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SystemStatusResponse"
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "With `server_id=all`: one entry per server; the status is 207 even when every server failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`server_id` is neither a server number nor `all`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server has the number given in `server_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "The server named by `server_id` has no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The server named by `server_id` did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppResponseError"
                 }
               }
             }
@@ -21788,6 +22460,21 @@
           }
         }
       },
+      "AllServersResponse": {
+        "type": "object",
+        "description": "The answer to a request sent with `server_id=all`: one entry per server,\nthis server first, then the others by id. The HTTP status is 207 whenever\nthe request ran, even if every server failed; each entry says how it went.",
+        "required": [
+          "servers"
+        ],
+        "properties": {
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerResult"
+            }
+          }
+        }
+      },
       "Analysing": {
         "type": "string",
         "enum": [
@@ -22310,6 +22997,10 @@
           "state_name"
         ],
         "properties": {
+          "daemons_only": {
+            "type": "boolean",
+            "description": "Leave the database alone and only restart this server's daemons for\nthe monitors the state names. This is what a server sends the other\nservers after it has applied the state, so the change is written once.\nIt is handled on this server and never passed on."
+          },
           "state_name": {
             "type": "string",
             "description": "Name of the state to apply"
@@ -27195,6 +27886,16 @@
           "message": {
             "type": "string",
             "description": "Human-readable message"
+          },
+          "servers": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ServerResult"
+            },
+            "description": "What the other servers of a multi-server install did, when the action\nreaches them too (applying a run state does). `success` and `message`\ndescribe this server only. Absent on a single-server install and for\nactions that stay on one server."
           },
           "success": {
             "type": "boolean",
@@ -34032,6 +34733,54 @@
           "zmtrigger": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "ServerResult": {
+        "type": "object",
+        "description": "What one server of a multi-server install answered to a request that went\nto several of them.",
+        "required": [
+          "name",
+          "ok",
+          "status"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the request failed on this server."
+          },
+          "name": {
+            "type": "string",
+            "description": "The server's name."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "Whether the server answered with a success status."
+          },
+          "result": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The JSON the server answered, as it would for the same request sent to\nit alone."
+          },
+          "server_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The server's `Servers.Id`. Null for the one server of an install whose\nhost has no server id.",
+            "minimum": 0
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The HTTP status the server answered with, or the one this server\ngives for not reaching it (502 no answer, 421 no address).",
+            "minimum": 0
           }
         }
       },

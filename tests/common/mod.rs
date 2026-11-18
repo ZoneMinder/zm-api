@@ -1,5 +1,6 @@
 // Common test helpers for integration tests
 pub mod assertions;
+pub mod cluster;
 pub mod fake_zmc;
 pub mod fixtures;
 pub mod harness;
